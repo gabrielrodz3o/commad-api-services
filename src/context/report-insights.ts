@@ -3,6 +3,7 @@
 // se pide a la IA un análisis estructurado con la voz de Comandi.
 import { comandiPersona } from '../llm/persona.js'
 import { generateJSON } from '../llm/provider.js'
+import type { UsageMeta } from '../llm/usage.js'
 import type { CompanyAIConfig } from '../db/tenant.js'
 
 const DOMAIN_PROMPTS: Record<string, { label: string; role: string }> = {
@@ -105,7 +106,7 @@ function periodLine(period?: ReportPeriod | null): string {
   return ''
 }
 
-export async function generateReportInsights(config: CompanyAIConfig, domain: string, report: any, period?: ReportPeriod | null) {
+export async function generateReportInsights(config: CompanyAIConfig, domain: string, report: any, period?: ReportPeriod | null, usageMeta?: UsageMeta) {
   return generateJSON({
     config,
     system: systemFor(domain),
@@ -113,5 +114,6 @@ export async function generateReportInsights(config: CompanyAIConfig, domain: st
     schema: REPORT_INSIGHTS_SCHEMA as any,
     schemaName: 'report_insights',
     maxTokens: 4096,
+    usageMeta,
   })
 }

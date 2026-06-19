@@ -41,7 +41,8 @@ export function insightsRoutes(app: FastifyInstance) {
         })
       }
 
-      const insights = await generateReportInsights(config, parsed.data.domain, report, parsed.data.period)
+      const userId = req.actor?.type === 'user' ? req.actor.userId : null
+      const insights = await generateReportInsights(config, parsed.data.domain, report, parsed.data.period, { businessUnitId, userId, endpoint: 'insights' })
       return { success: true, enabled: true, provider: config.provider, model: config.model, insights }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })

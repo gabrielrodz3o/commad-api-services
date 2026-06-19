@@ -7,6 +7,7 @@
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import type { CompanyAIConfig } from '../db/tenant.js'
+import { addUsage, type AIUsage } from './usage.js'
 
 export interface Tool {
   name: string
@@ -18,6 +19,7 @@ export interface Tool {
 export interface AgentResult {
   answer: string
   steps: { tool: string; args: any }[]
+  usage: AIUsage
 }
 
 export class AgentError extends Error { statusCode = 502 }
@@ -46,10 +48,13 @@ export async function runAgent(config: CompanyAIConfig, system: string, userMess
     }
   }
 
+  const usage: AIUsage = { provider: config.provider, model: config.model, tokensIn: 0, tokensOut: 0 }
+
   try {
-    return config.provider === 'openai'
-      ? await runOpenAI(config, system, userMessage, tools, exec, steps, hist)
-      : await runAnthropic(config, system, userMessage, tools, exec, steps, hist)
+    const inner = config.provider === 'openai'
+      ? await runOpenAI(config, system, userMessage, tools, exec, steps, hist, usage)
+      : await runAnthropic(config, system, userMessage, tools, exec, steps, hist, usage)
+    return { ...inner, usage }
   } catch (e: any) {
     console.error(`❌ Agent (${config.provider}/${config.model}):`, e?.message)
     throw new AgentError(`El motor de IA (${config.provider}) falló: ${e?.message || 'error'}`)
@@ -57,7 +62,9 @@ export async function runAgent(config: CompanyAIConfig, system: string, userMess
 }
 
 // ── OpenAI (Chat Completions + function calling) ────────────────────────────
-async function runOpenAI(config: CompanyAIConfig, system: string, user: string, tools: Tool[], exec: (n: string, a: any) => Promise<string>, steps: any[], hist: HistoryTurn[]): Promise<AgentResult> {
+type InnerResult = { answer: string; steps: any[] }
+
+async function runOpenAI(config: CompanyAIConfig, system: string, user: string, tools: Tool[], exec: (n: string, a: any) => Promise<string>, steps: any[], hist: HistoryTurn[], usage: AIUsage): Promise<InnerResult> {
   const client = new OpenAI({ apiKey: config.apiKey })
   const supportsTemp = config.model.startsWith('gpt-4o')
   const oaiTools = tools.map((t) => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }))
@@ -76,6 +83,7 @@ async function runOpenAI(config: CompanyAIConfig, system: string, user: string, 
       tool_choice: 'auto',
       max_completion_tokens: 2000,
     })
+    addUsage(usage, res.usage)
     const msg = res.choices[0]?.message
     messages.push(msg)
     if (!msg?.tool_calls?.length) return { answer: msg?.content || '', steps }
@@ -91,7 +99,7 @@ async function runOpenAI(config: CompanyAIConfig, system: string, user: string, 
 }
 
 // ── Anthropic (Messages + tool use) ─────────────────────────────────────────
-async function runAnthropic(config: CompanyAIConfig, system: string, user: string, tools: Tool[], exec: (n: string, a: any) => Promise<string>, steps: any[], hist: HistoryTurn[]): Promise<AgentResult> {
+async function runAnthropic(config: CompanyAIConfig, system: string, user: string, tools: Tool[], exec: (n: string, a: any) => Promise<string>, steps: any[], hist: HistoryTurn[], usage: AIUsage): Promise<InnerResult> {
   const client = new Anthropic({ apiKey: config.apiKey })
   const antTools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema as any }))
   const messages: any[] = [
@@ -101,6 +109,7 @@ async function runAnthropic(config: CompanyAIConfig, system: string, user: strin
 
   for (let i = 0; i < MAX_STEPS; i++) {
     const res = await client.messages.create({ model: config.model, max_tokens: 2000, system, messages, tools: antTools })
+    addUsage(usage, res.usage)
     messages.push({ role: 'assistant', content: res.content })
     if (res.stop_reason !== 'tool_use') {
       const answer = res.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()

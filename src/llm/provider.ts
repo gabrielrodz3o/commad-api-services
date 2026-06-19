@@ -9,6 +9,8 @@
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import type { CompanyAIConfig } from '../db/tenant.js'
+import { addUsage, type AIUsage, type UsageMeta } from './usage.js'
+import { logUsage } from '../db/usage-log.js'
 
 export class LLMError extends Error {
   statusCode = 502
@@ -19,6 +21,16 @@ export interface TextOpts {
   system: string
   user: string
   maxTokens?: number
+  // Si viene, se registra el consumo en comandi.usage_log (costo por empresa).
+  usageMeta?: UsageMeta
+}
+
+/** Registra el consumo de una llamada al LLM si se pidió (fire-and-forget). */
+function record(opts: TextOpts, raw: any): void {
+  if (!opts.usageMeta) return
+  const usage: AIUsage = { provider: opts.config.provider, model: opts.config.model, tokensIn: 0, tokensOut: 0 }
+  addUsage(usage, raw)
+  logUsage(opts.usageMeta, usage)
 }
 
 export interface JsonOpts extends TextOpts {
@@ -44,6 +56,7 @@ export async function generateText(opts: TextOpts): Promise<string> {
           { role: 'user', content: [{ type: 'input_text', text: user }] },
         ],
       })
+      record(opts, res.usage)
       return res.output_text || ''
     }
     const client = new Anthropic({ apiKey: config.apiKey })
@@ -53,6 +66,7 @@ export async function generateText(opts: TextOpts): Promise<string> {
       system,
       messages: [{ role: 'user', content: user }],
     })
+    record(opts, msg.usage)
     return msg.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
   } catch (e: any) {
     console.error(`❌ LLM text (${config.provider}/${config.model}):`, e?.message)
@@ -82,6 +96,7 @@ export async function generateJSON<T = any>(opts: JsonOpts): Promise<T> {
       })
       const raw = res.output_text
       if (!raw) throw new Error('Respuesta vacía (OpenAI)')
+      record(opts, res.usage)
       return JSON.parse(raw) as T
     }
     const client = new Anthropic({ apiKey: config.apiKey })
@@ -95,6 +110,7 @@ export async function generateJSON<T = any>(opts: JsonOpts): Promise<T> {
     })
     const block = msg.content.find((b: any) => b.type === 'tool_use') as any
     if (!block) throw new Error('Sin tool_use (Claude)')
+    record(opts, msg.usage)
     return block.input as T
   } catch (e: any) {
     console.error(`❌ LLM json (${config.provider}/${config.model}):`, e?.message)

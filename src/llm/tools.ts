@@ -3,7 +3,19 @@
 // se agregarán aquí después, con confirmación.
 import { fetchReportForDomain, domainSupportsFetch } from '../context/report-registry.js'
 import { compactReport } from '../context/report-insights.js'
+import { buildProcurementContext } from '../context/procurement.js'
 import type { Tool } from './agent.js'
+import { listActions } from '../actions/registry.js'
+import { proposeAction } from '../db/action-log.js'
+import type { ActionContext } from '../actions/context.js'
+
+// Acción propuesta por el agente (pendiente de confirmación del usuario).
+export interface ProposedAction {
+  token: string
+  summary: string
+  action_type: string
+  expires_at: string
+}
 
 const REPORT_DOMAINS = [
   'profit_loss', 'cost_analysis', 'cash_flow', 'dead_stock', 'reorder', 'inventory_turnover',
@@ -17,6 +29,8 @@ export interface BusinessCtx {
   activeLocationId?: number                    // sucursal donde está navegando el usuario
   branches: { id: number; name: string }[]     // catálogo de sucursales (para resolver nombres)
   defaultPeriod?: { from?: string; to?: string } | null
+  userId?: number | null                       // quién pregunta (para auditar acciones)
+  proposals?: ProposedAction[]                 // sink: acciones de escritura propuestas este turno
 }
 
 export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
@@ -30,7 +44,7 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
     return ctx.allowedLocationIds.slice(0, 1)
   }
 
-  return [
+  const tools: Tool[] = [
     {
       name: 'get_report',
       description: 'Obtiene un reporte ya calculado del negocio. Para "¿cuánto vendí/gané/utilidad/ingresos?" usa SIEMPRE domain="profit_loss". food cost → cost_analysis; caja → cash_flow; etc. Pasa date_from/date_to según el período de la pregunta. Para el alcance de SUCURSALES usa location_ids: si el usuario no especifica, NO lo pongas (se usa la sucursal activa); si dice "todas/consolidado" pon todas; si nombra una, pon su id. Puedes llamarlo varias veces y combinar.',
@@ -57,5 +71,47 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
         return { _sucursales_usadas: usedNames, ...compactReport(report, 12) }
       },
     },
+    {
+      name: 'get_procurement_context',
+      description: 'Datos de COMPRAS / procurement de la empresa: spend total, top suplidores, maverick spend, requisiciones/órdenes pendientes, discrepancias 3-way-match, presupuesto. Úsalo para preguntas de compras, proveedores o gasto.',
+      input_schema: { type: 'object', additionalProperties: false, properties: {} },
+      run: async () => buildProcurementContext(ctx.businessUnitId),
+    },
   ]
+
+  // ── Acciones de ESCRITURA (propose-only): el agente propone, el usuario confirma ──
+  const actionCtx: ActionContext = {
+    businessUnitId: ctx.businessUnitId,
+    userId: ctx.userId ?? null,
+    locationIds: ctx.allowedLocationIds,
+    activeLocationId: ctx.activeLocationId ?? null,
+  }
+  for (const def of listActions()) {
+    tools.push({
+      name: `propose_${def.type}`,
+      description: def.description,
+      input_schema: def.input_schema,
+      run: async (args: any) => {
+        const prep = await def.prepare(args || {}, actionCtx)
+        if (!prep.ok) return { needs_clarification: prep.message }
+        const row = await proposeAction({
+          businessUnitId: ctx.businessUnitId,
+          userId: ctx.userId ?? null,
+          actionType: def.type,
+          summary: prep.summary,
+          payload: prep.payload,
+          locationIds: ctx.allowedLocationIds,
+          channel: 'web',
+        })
+        ctx.proposals?.push({ token: row.confirm_token, summary: prep.summary, action_type: def.type, expires_at: row.expires_at })
+        return {
+          proposed: true,
+          summary: prep.summary,
+          status: 'PENDIENTE_DE_CONFIRMACION',
+          note: 'La acción NO está hecha todavía. Dile al usuario EXACTAMENTE qué vas a hacer (el resumen) y pídele que confirme con el botón. No afirmes que ya quedó hecha.',
+        }
+      },
+    })
+  }
+  return tools
 }
