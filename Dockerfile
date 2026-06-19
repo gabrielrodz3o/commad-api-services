@@ -4,7 +4,7 @@ WORKDIR /app
 RUN corepack enable
 
 # Dependencias (cacheable)
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
 RUN pnpm install --frozen-lockfile
 
 # Código
