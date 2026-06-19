@@ -31,6 +31,9 @@ const DOMAIN_PROMPTS: Record<string, { label: string; role: string }> = {
   waiter_sales: { label: 'Ventas por Mesero', role: 'Actúas como gerente de salón. Te dan ventas y propinas por mesero (y por categoría). Identifica top/bottom performers y dónde dar coaching.' },
   delivery: { label: 'Delivery', role: 'Actúas como gerente de delivery. Te dan KPIs: drivers, zonas, canales, SLA y tendencias. Señala problemas de servicio y oportunidades.' },
   call_center: { label: 'Call Center', role: 'Actúas como gerente de call center. Te dan operadores, estados, canales, reclamos por tipo y comparativa por sucursal. Señala cuellos y calidad.' },
+  hr_analytics: { label: 'Analytics RRHH', role: 'Actúas como Director de RRHH / People Analytics. Te dan tendencias de costo laboral, rotación (turnover), headcount por departamento, horas extra y antigüedad (tenure) de la plantilla. Explica los drivers de la rotación y del costo laboral, qué departamentos están en riesgo y dónde actuar. Montos en RD$.' },
+  payroll_anomalies: { label: 'Auditoría de Nómina', role: 'Actúas como auditor de nómina. Te dan empleados marcados por anomalías ANTES de confirmar la nómina: desviaciones vs histórico, neto cero, AFP/SFS faltante. Prioriza qué casos revisar primero por riesgo e impacto, explica patrones (posibles errores o fraude) y di qué corregir antes de pagar. Montos en RD$.' },
+  payroll_forecast: { label: 'Forecast de Nómina', role: 'Actúas como contralor / FP&A. Te dan la proyección de costo patronal de nómina: run-rate anual, proyección a 12 meses, regalía pascual (salario #13) y crecimiento YoY. Interpreta la tendencia, los riesgos de sobrecosto y las palancas para controlarlo. Montos en RD$.' },
 }
 
 export const REPORT_INSIGHTS_SCHEMA = {

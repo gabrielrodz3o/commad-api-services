@@ -80,6 +80,33 @@ ALCANCE: si el usuario NO menciona sucursal, usa SOLO la ACTIVA (no pongas locat
   return { businessUnitId, config, system, tools, proposals, userId }
 }
 
+export type AgentData = z.infer<typeof Body>
+export const AgentBody = Body
+
+export interface AgentRunResult {
+  enabled: boolean
+  provider?: string
+  model?: string
+  answer?: string
+  tools_used?: string[]
+  pending_action?: ProposedAction | null
+}
+
+// Corre el agente para una petición ya validada. Reutilizado por /comandi/agent
+// y por /comandi/voice (tras transcribir el audio a texto).
+export async function runBusinessAgent(data: AgentData, actor?: Actor): Promise<AgentRunResult> {
+  const p = await prepareRun(data, actor)
+  if (!p) return { enabled: false }
+  const result = await runAgent(p.config, p.system, data.question, p.tools, data.history || [])
+  logUsage({ businessUnitId: p.businessUnitId, userId: p.userId, endpoint: 'agent' }, result.usage, { steps: result.steps.length })
+  return {
+    enabled: true, provider: p.config.provider, model: p.config.model,
+    answer: result.answer,
+    tools_used: result.steps.map((s) => s.tool),
+    pending_action: p.proposals.length ? p.proposals[p.proposals.length - 1] : null,
+  }
+}
+
 export function agentRoutes(app: FastifyInstance) {
   // ── No streaming (JSON) ────────────────────────────────────────────────────
   app.post('/comandi/agent', async (req, reply) => {
@@ -87,18 +114,9 @@ export function agentRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ success: false, message: 'Body inválido', errors: parsed.error.flatten() })
 
     try {
-      const p = await prepareRun(parsed.data, req.actor)
-      if (!p) return { success: true, enabled: false, message: 'Comandi no está activado para esta empresa.' }
-
-      const result = await runAgent(p.config, p.system, parsed.data.question, p.tools, parsed.data.history || [])
-      logUsage({ businessUnitId: p.businessUnitId, userId: p.userId, endpoint: 'agent' }, result.usage, { steps: result.steps.length })
-
-      return {
-        success: true, enabled: true, provider: p.config.provider, model: p.config.model,
-        answer: result.answer,
-        tools_used: result.steps.map((s) => s.tool),
-        pending_action: p.proposals.length ? p.proposals[p.proposals.length - 1] : null,
-      }
+      const out = await runBusinessAgent(parsed.data, req.actor)
+      if (!out.enabled) return { success: true, enabled: false, message: 'Comandi no está activado para esta empresa.' }
+      return { success: true, ...out }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
       if (e instanceof AgentError) return reply.code(502).send({ success: false, message: e.message })

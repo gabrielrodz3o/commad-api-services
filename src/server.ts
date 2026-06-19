@@ -3,6 +3,7 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
+import multipart from '@fastify/multipart'
 import { env, corsOrigins } from './config/env.js'
 import { registerAuth } from './plugins/auth.js'
 import { healthRoutes } from './routes/health.js'
@@ -10,6 +11,7 @@ import { askRoutes } from './routes/ask.js'
 import { insightsRoutes } from './routes/insights.js'
 import { agentRoutes } from './routes/agent.js'
 import { actionRoutes } from './routes/action.js'
+import { voiceRoutes } from './routes/voice.js'
 import { telegramRoutes } from './routes/telegram.js'
 import { startTelegramPoller } from './telegram/poller.js'
 
@@ -26,6 +28,9 @@ await app.register(cors, {
 
 registerAuth(app)
 
+// Audio de notas de voz (multipart). Límite 25 MB (tope de la API de OpenAI).
+await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 10 } })
+
 // Rate-limit: protege las llaves de IA (BYO-key) de abuso. El token de servicio
 // (core/satélites) no se limita; usuarios y anónimos sí, por identidad o IP.
 await app.register(rateLimit, {
@@ -41,6 +46,7 @@ askRoutes(app)
 insightsRoutes(app)
 agentRoutes(app)
 actionRoutes(app)
+voiceRoutes(app)
 telegramRoutes(app)
 
 app.get('/', async () => ({ service: 'comandi', message: 'Comandi service up' }))
