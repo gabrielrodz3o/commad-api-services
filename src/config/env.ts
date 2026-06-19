@@ -25,6 +25,10 @@ const schema = z.object({
 
   OPENAI_API_KEY: z.string().default(''),
   ANTHROPIC_API_KEY: z.string().default(''),
+
+  // Telegram — bot de plataforma (fallback). Cada empresa puede traer el suyo
+  // en business_units.telegram_bot_token. Vacío = canal Telegram deshabilitado.
+  TELEGRAM_BOT_TOKEN: z.string().default(''),
 })
 
 const parsed = schema.safeParse(process.env)
