@@ -4,7 +4,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 import multipart from '@fastify/multipart'
-import { env, corsOrigins } from './config/env.js'
+import { env, isOriginAllowed } from './config/env.js'
 import { registerAuth } from './plugins/auth.js'
 import { healthRoutes } from './routes/health.js'
 import { askRoutes } from './routes/ask.js'
@@ -20,8 +20,11 @@ const app = Fastify({
   bodyLimit: 5 * 1024 * 1024, // reportes pueden venir grandes
 })
 
+// CORS multi-tenant: permite (a) sin origin (apps nativas/curl/server-to-server),
+// (b) los orígenes exactos de CORS_ORIGINS, (c) cualquier subdominio de comandpos.com
+// (cada cliente tiene el suyo: pizzagetto.comandpos.com, etc.).
 await app.register(cors, {
-  origin: corsOrigins.length ? corsOrigins : false,
+  origin: (origin, cb) => cb(null, isOriginAllowed(origin)),
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-service-token'],
 })

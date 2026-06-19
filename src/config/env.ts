@@ -29,6 +29,10 @@ const schema = z.object({
   // Telegram — bot de plataforma (fallback). Cada empresa puede traer el suyo
   // en business_units.telegram_bot_token. Vacío = canal Telegram deshabilitado.
   TELEGRAM_BOT_TOKEN: z.string().default(''),
+
+  // CORS multi-tenant: además de CORS_ORIGINS (lista exacta), se permite cualquier
+  // subdominio de estos sufijos (ej. pizzagetto.comandpos.com, cliente2.comandpos.com…).
+  CORS_ORIGIN_SUFFIXES: z.string().default('.comandpos.com'),
 })
 
 const parsed = schema.safeParse(process.env)
@@ -39,3 +43,22 @@ if (!parsed.success) {
 
 export const env = parsed.data
 export const corsOrigins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+// Sufijos permitidos (subdominios). Se normalizan a algo tipo ".comandpos.com".
+export const corsOriginSuffixes = env.CORS_ORIGIN_SUFFIXES
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((s) => (s.startsWith('.') ? s : `.${s}`))
+
+// ¿Se permite este origin? (sin origin = app nativa/curl → sí). Reutilizado por el
+// plugin CORS y por la ruta de streaming, que escribe headers a mano.
+export function isOriginAllowed(origin?: string | null): boolean {
+  if (!origin) return true
+  if (corsOrigins.includes(origin)) return true
+  try {
+    const host = new URL(origin).hostname
+    return corsOriginSuffixes.some((suf) => host.endsWith(suf) || host === suf.slice(1))
+  } catch {
+    return false
+  }
+}

@@ -5,6 +5,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { locationFields, normalizeLocationIds, resolveTenant } from '../lib/resolve.js'
+import { isOriginAllowed } from '../config/env.js'
 import { TenantError } from '../db/tenant.js'
 import { comandiPersona } from '../llm/persona.js'
 import { buildBusinessTools, type ProposedAction } from '../llm/tools.js'
@@ -139,11 +140,18 @@ export function agentRoutes(app: FastifyInstance) {
     }
     if (!p) return { success: true, enabled: false, message: 'Comandi no está activado para esta empresa.' }
 
+    // CORS a mano: al escribir la respuesta raw nos saltamos los headers que pone
+    // @fastify/cors, así que añadimos Access-Control-Allow-Origin nosotros mismos.
+    const origin = req.headers.origin
+    const corsHeaders: Record<string, string> = origin && isOriginAllowed(origin)
+      ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' }
+      : {}
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
+      ...corsHeaders,
     })
     const send = (event: string, data: any) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
     send('meta', { provider: p.config.provider, model: p.config.model })
