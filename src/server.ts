@@ -12,6 +12,7 @@ import { insightsRoutes } from './routes/insights.js'
 import { agentRoutes } from './routes/agent.js'
 import { actionRoutes } from './routes/action.js'
 import { voiceRoutes } from './routes/voice.js'
+import { usageRoutes } from './routes/usage.js'
 import { telegramRoutes } from './routes/telegram.js'
 import { startTelegramPoller } from './telegram/poller.js'
 
@@ -50,6 +51,7 @@ insightsRoutes(app)
 agentRoutes(app)
 actionRoutes(app)
 voiceRoutes(app)
+usageRoutes(app)
 telegramRoutes(app)
 
 app.get('/', async () => ({ service: 'comandi', message: 'Comandi service up' }))
