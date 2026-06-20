@@ -1,7 +1,6 @@
 // Ejecuta el copiloto agéntico para un usuario de COMAND (por su user_id), aplicando
 // su RBAC. Reutilizado por el bot (mensajes) y por el briefing proactivo.
-import { query } from '../db/pool.js'
-import { getUserLocationIds } from '../db/access.js'
+import { resolveUserScope } from '../lib/scope.js'
 import { getAIConfig } from '../db/tenant.js'
 import { buildBusinessTools, type ProposedAction } from '../llm/tools.js'
 import { runAgent } from '../llm/agent.js'
@@ -18,23 +17,6 @@ Reglas:
 )
 
 export interface UserAnswer { enabled: boolean; answer: string; pending: ProposedAction | null }
-
-// Empresa (BU) dominante del usuario + sus sucursales en esa empresa (multi-empresa).
-async function resolveUserScope(userId: number): Promise<{ businessUnitId: number; locationIds: number[] } | null> {
-  const accessible = await getUserLocationIds(userId)
-  if (!accessible.length) return null
-  const rows = await query<{ business_unit_id: number; ids: number[] }>(
-    `SELECT l.business_unit_id, array_agg(l.id) AS ids
-       FROM human_resource.locations l
-      WHERE l.id = ANY($1) AND l.business_unit_id IS NOT NULL
-      GROUP BY l.business_unit_id
-      ORDER BY count(*) DESC
-      LIMIT 1`,
-    [accessible],
-  )
-  if (!rows.length) return null
-  return { businessUnitId: Number(rows[0].business_unit_id), locationIds: rows[0].ids.map(Number) }
-}
 
 export async function answerForUser(userId: number, question: string, endpoint = 'telegram'): Promise<UserAnswer> {
   const scope = await resolveUserScope(userId)

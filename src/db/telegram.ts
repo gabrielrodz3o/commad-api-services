@@ -53,6 +53,11 @@ export async function unlinkChat(chatId: number): Promise<void> {
   await query('DELETE FROM comandi.telegram_links WHERE chat_id = $1', [chatId])
 }
 
+/** Todos los vínculos (chat ↔ usuario) — para el vigilante proactivo por cron. */
+export async function getAllLinks(): Promise<{ chat_id: number; user_id: number }[]> {
+  return query<{ chat_id: number; user_id: number }>('SELECT chat_id, user_id FROM comandi.telegram_links')
+}
+
 /** Chats vinculados a un usuario (para estado en la app y para el briefing). */
 export async function getChatsByUser(userId: number): Promise<number[]> {
   const rows = await query<{ chat_id: number }>('SELECT chat_id FROM comandi.telegram_links WHERE user_id = $1', [userId])

@@ -4,6 +4,9 @@
 import { fetchReportForDomain, domainSupportsFetch } from '../context/report-registry.js'
 import { compactReport } from '../context/report-insights.js'
 import { buildProcurementContext } from '../context/procurement.js'
+import { salesForecast } from '../context/forecast.js'
+import { embed } from '../context/embeddings.js'
+import { searchKnowledge } from '../db/knowledge.js'
 import type { Tool } from './agent.js'
 import { listActions } from '../actions/registry.js'
 import { proposeAction } from '../db/action-log.js'
@@ -76,6 +79,33 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
       description: 'Datos de COMPRAS / procurement de la empresa: spend total, top suplidores, maverick spend, requisiciones/órdenes pendientes, discrepancias 3-way-match, presupuesto. Úsalo para preguntas de compras, proveedores o gasto.',
       input_schema: { type: 'object', additionalProperties: false, properties: {} },
       run: async () => buildProcurementContext(ctx.businessUnitId),
+    },
+    {
+      name: 'get_forecast',
+      description: 'PRONÓSTICO de ventas para los próximos 7 días (promedio por día de semana, últimas 8 semanas). Úsalo para "¿cuánto venderé?", "¿qué preparar/comprar?", planificación de la semana. location_ids opcional (omitir = sucursal activa).',
+      input_schema: {
+        type: 'object', additionalProperties: false,
+        properties: { location_ids: { type: 'array', items: { type: 'integer' }, description: 'Ids de sucursales. Omitir = activa.' } },
+      },
+      run: async (args: any) => salesForecast(resolveLocations(args?.location_ids)),
+    },
+    {
+      name: 'get_knowledge',
+      description: 'Consulta la BASE DE CONOCIMIENTO del negocio: políticas, procedimientos/SOPs, contratos, info que NO son datos numéricos. Úsalo para "¿cuál es la política de X?", "¿cómo se hace Y?", "¿qué dice el contrato con Z?". Devuelve los fragmentos más relevantes.',
+      input_schema: {
+        type: 'object', additionalProperties: false, required: ['query'],
+        properties: { query: { type: 'string', description: 'Pregunta o tema a buscar.' } },
+      },
+      run: async (args: any) => {
+        try {
+          const vec = await embed(String(args?.query || ''), ctx.businessUnitId)
+          const hits = (await searchKnowledge(ctx.businessUnitId, vec, 4)).filter((h) => h.score > 0.2)
+          if (!hits.length) return { sin_resultados: true, nota: 'No hay nada en la base de conocimiento sobre eso.' }
+          return { fragmentos: hits.map((h) => ({ titulo: h.title, contenido: h.content, score: Math.round(h.score * 100) / 100 })) }
+        } catch (e: any) {
+          return { error: e?.message || 'fallo en la búsqueda de conocimiento' }
+        }
+      },
     },
   ]
 
