@@ -40,6 +40,11 @@ export const RULES: Rule[] = [
       if (short > 500 || criticos > 0) {
         out.push({ domain: 'cash_over_short', severity: short > 2000 || criticos > 1 ? 'alta' : 'media', title: 'Descuadres de caja', detail: `Faltantes por ${dop(short)}${criticos ? ` · ${criticos} caso(s) crítico(s)` : ''}.` })
       }
+      // Fraude: cajero con faltantes serios RECURRENTES (posible robo o error sistemático).
+      const reincidente = (r?.usuarios_problema || []).find((u: any) => num(u.serious_issues) >= 2 && num(u.net_difference) < 0)
+      if (reincidente) {
+        out.push({ domain: 'cash_over_short', severity: 'alta', title: 'Posible fraude en caja', detail: `${reincidente.user_name}: ${num(reincidente.serious_issues)} faltantes serios (neto ${dop(reincidente.net_difference)}). Revisa con arqueo sorpresa.` })
+      }
       return out
     },
   },

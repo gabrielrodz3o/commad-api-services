@@ -5,6 +5,8 @@ import { fetchReportForDomain, domainSupportsFetch } from '../context/report-reg
 import { compactReport } from '../context/report-insights.js'
 import { buildProcurementContext } from '../context/procurement.js'
 import { salesForecast } from '../context/forecast.js'
+import { lossPrevention } from '../context/loss-prevention.js'
+import { branchBenchmark } from '../context/benchmark.js'
 import { embed } from '../context/embeddings.js'
 import { searchKnowledge } from '../db/knowledge.js'
 import type { Tool } from './agent.js'
@@ -88,6 +90,40 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
         properties: { location_ids: { type: 'array', items: { type: 'integer' }, description: 'Ids de sucursales. Omitir = activa.' } },
       },
       run: async (args: any) => salesForecast(resolveLocations(args?.location_ids)),
+    },
+    {
+      name: 'get_loss_prevention',
+      description: 'PREVENCIÓN DE PÉRDIDAS / FRAUDE: cajeros con faltantes de caja recurrentes, casos críticos de descuadre. Úsalo para "¿hay robo/fraude?", "¿qué cajero descuadra?", "¿dónde pierdo dinero?". location_ids opcional.',
+      input_schema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          location_ids: { type: 'array', items: { type: 'integer' }, description: 'Omitir = activa.' },
+          date_from: { type: 'string', description: 'YYYY-MM-DD (opcional, default últimos 30 días).' },
+          date_to: { type: 'string', description: 'YYYY-MM-DD (opcional).' },
+        },
+      },
+      run: async (args: any) => {
+        const period = {
+          from: args?.date_from || ctx.defaultPeriod?.from || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10),
+          to: args?.date_to || ctx.defaultPeriod?.to || new Date().toISOString().slice(0, 10),
+        }
+        return lossPrevention(ctx.businessUnitId, resolveLocations(args?.location_ids), period)
+      },
+    },
+    {
+      name: 'get_branch_benchmark',
+      description: 'BENCHMARK entre SUCURSALES: compara y rankea las sucursales de la empresa por food cost, ventas y margen; señala la peor y la mejor. Úsalo para "¿cuál sucursal va peor/mejor?", "compara mis sucursales".',
+      input_schema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          date_from: { type: 'string', description: 'YYYY-MM-DD (opcional).' },
+          date_to: { type: 'string', description: 'YYYY-MM-DD (opcional).' },
+        },
+      },
+      run: async (args: any) => {
+        const period = { from: args?.date_from || ctx.defaultPeriod?.from, to: args?.date_to || ctx.defaultPeriod?.to }
+        return branchBenchmark(ctx.businessUnitId, ctx.branches, period)
+      },
     },
     {
       name: 'get_knowledge',
