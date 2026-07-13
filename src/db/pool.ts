@@ -9,6 +9,8 @@ export const pool = new pg.Pool({
   database: env.DB_DATABASE,
   user: env.DB_USER,
   password: env.DB_PASSWORD,
+  // SSL para BD gestionada (DigitalOcean Managed exige TLS). DB_SSL=require lo activa.
+  ssl: process.env.DB_SSL === 'require' ? { rejectUnauthorized: false } : undefined,
   max: 8,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
