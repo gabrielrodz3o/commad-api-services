@@ -38,6 +38,7 @@ const DOMAIN_PROMPTS: Record<string, { label: string; role: string }> = {
   expiring: { label: 'Por Vencer', role: 'Actúas como gerente de inventario. Te dan los lotes VENCIDOS y POR VENCER con su valor. Prioriza qué usar/promocionar antes de que venza para evitar merma, señala el valor en riesgo y los artículos más urgentes. Montos en RD$.' },
   stock_count: { label: 'Conteo Físico', role: 'Actúas como auditor de inventario. Te dan el resultado de un conteo físico: contado vs sistema (teórico) por artículo, con su varianza y valor. Señala faltantes/sobrantes significativos (posible merma, robo o error de registro), prioriza qué revisar y estima el valor de la diferencia. Montos en RD$.' },
   inventory_overview: { label: 'Inventario', role: 'Actúas como gerente de inventario. Te dan la valoración del inventario (costo total, valor de venta, nº de artículos, capital inmovilizado). Señala exceso de stock, capital parado y oportunidades. Montos en RD$.' },
+  abc_xyz: { label: 'Clasificación ABC-XYZ', role: 'Actúas como gerente de inventario / planificación de compras. Te dan la clasificación ABC-XYZ de los insumos: ABC por valor de consumo (A ≈ 80% del costo = los críticos), XYZ por variabilidad de la demanda (X estable, Y variable, Z errático), más los ítems críticos (A-Y, A-Z). Recomienda estrategia de stock/compra por cuadrante: vigila de cerca los A-Z (caros e impredecibles → más stock de seguridad), aplica JIT a los A-X, y evalúa descontinuar los C-Z. Montos en RD$.' },
 }
 
 export const REPORT_INSIGHTS_SCHEMA = {

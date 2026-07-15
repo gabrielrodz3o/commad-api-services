@@ -25,7 +25,7 @@ export interface ProposedAction {
 const REPORT_DOMAINS = [
   'profit_loss', 'cost_analysis', 'cash_flow', 'dead_stock', 'reorder', 'inventory_turnover',
   'accounts_receivable', 'accounts_payable', 'break_even', 'cash_over_short',
-  'audit', 'tips', 'table_turnover',
+  'audit', 'tips', 'table_turnover', 'accounting',
 ]
 
 export interface BusinessCtx {
@@ -52,7 +52,7 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
   const tools: Tool[] = [
     {
       name: 'get_report',
-      description: 'Obtiene un reporte ya calculado del negocio. Para "¿cuánto vendí/gané/utilidad/ingresos?" usa SIEMPRE domain="profit_loss". food cost → cost_analysis; caja → cash_flow; etc. Pasa date_from/date_to según el período de la pregunta. Para el alcance de SUCURSALES usa location_ids: si el usuario no especifica, NO lo pongas (se usa la sucursal activa); si dice "todas/consolidado" pon todas; si nombra una, pon su id. Puedes llamarlo varias veces y combinar.',
+      description: 'Obtiene un reporte ya calculado del negocio. Para "¿cuánto vendí/gané/utilidad/ingresos?" usa SIEMPRE domain="profit_loss". food cost → cost_analysis; caja → cash_flow. Para CONTABILIDAD FORMAL (estado de resultados/balance general/utilidad contable/cuánto gasté en una cuenta como alquiler o sueldos/gastos por cuenta/margen/food cost contable) usa domain="accounting" (cifras del mayor, nivel empresa). Pasa date_from/date_to según el período. Para el alcance de SUCURSALES usa location_ids: si el usuario no especifica, NO lo pongas (se usa la sucursal activa); si dice "todas/consolidado" pon todas; si nombra una, pon su id. Puedes llamarlo varias veces y combinar.',
       input_schema: {
         type: 'object',
         additionalProperties: false,

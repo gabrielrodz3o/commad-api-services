@@ -31,6 +31,13 @@ const singleLoc: BodyBuilder = (a) => ({
   date_to: a.period?.to,
 })
 
+// Contabilidad: dato a nivel de UNIDAD DE NEGOCIO (no por sucursal).
+const buLevel: BodyBuilder = (a) => ({
+  business_unit_id: a.businessUnitId,
+  date_from: a.period?.from,
+  date_to: a.period?.to,
+})
+
 // Todos agregan por varias sucursales (location_ids[]); con una sola elegida = esa sucursal.
 const REGISTRY: Record<string, { path: string; body: BodyBuilder; multi: boolean }> = {
   profit_loss: { path: '/api/restaurant/reports/pl-kpis', body: multiLoc, multi: true },
@@ -46,6 +53,9 @@ const REGISTRY: Record<string, { path: string; body: BodyBuilder; multi: boolean
   audit: { path: '/api/restaurant/reports/audit-trail', body: multiLoc, multi: true },
   tips: { path: '/api/restaurant/reports/tips-analysis', body: multiLoc, multi: true },
   table_turnover: { path: '/api/restaurant/reports/table-turnover', body: multiLoc, multi: true },
+  // Contabilidad general (mayor): estado de resultados, balance, gastos por cuenta,
+  // utilidad contable, food cost. Nivel unidad de negocio.
+  accounting: { path: '/api/accounting/comandi-context', body: buLevel, multi: false },
 }
 
 export function domainSupportsFetch(domain: string): boolean {
