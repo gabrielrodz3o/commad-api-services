@@ -79,7 +79,7 @@ export function mobileAuthRoutes(app: FastifyInstance) {
         `SELECT count(*)::int n FROM finances.customer_otp_challenges WHERE business_unit_id=$1 AND phone_e164=$2 AND created_at>now()-interval '15 minutes'`,
         [c.businessUnitId, phone],
       );
-      if (Number(recent[0]?.n) >= 3)
+      if (Number(recent[0]?.n) >= (env.APP_ENV === "production" ? 3 : 20))
         throw Object.assign(
           new Error("Espera unos minutos antes de solicitar otro código"),
           { statusCode: 429, code: "OTP_RATE_LIMIT" },
@@ -139,7 +139,7 @@ export function mobileAuthRoutes(app: FastifyInstance) {
         .object({
           challenge_id: z.string().uuid(),
           code: z.string().regex(/^\d{6}$/),
-          name: z.string().trim().min(1).optional(),
+          name: z.string().trim().optional().transform((v) => (v === '' ? undefined : v)),
           link_token: z.string().optional(),
           device: z.any().optional(),
         })
