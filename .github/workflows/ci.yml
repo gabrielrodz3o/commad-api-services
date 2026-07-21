@@ -32,10 +32,20 @@ jobs:
         with: { registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}' }
       - id: image
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/command-api-services:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - id: branch-tag
+        if: github.event_name == 'push'
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "tag=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/command-api-services:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/command-api-services:test" >> "$GITHUB_OUTPUT"
+          fi
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name == 'push' }}
-          tags: ${{ steps.image.outputs.image }}
+          tags: |
+            ${{ steps.image.outputs.image }}
+            ${{ steps.branch-tag.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
