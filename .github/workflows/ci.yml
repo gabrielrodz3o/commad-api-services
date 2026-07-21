@@ -9,6 +9,13 @@ permissions:
 jobs:
   validate-build:
     runs-on: ubuntu-latest
+    env:
+      COMANDI_SERVICE_TOKEN: mock_token_for_ci
+      DB_HOST: localhost
+      DB_DATABASE: gcode_test
+      DB_USER: postgres
+      DB_PASSWORD: password
+      APP_ENV: test
     outputs:
       image: ${{ steps.image.outputs.image }}
     steps:
