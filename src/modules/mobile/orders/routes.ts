@@ -323,16 +323,310 @@ export function mobileOrderRoutes(app: FastifyInstance) {
           statusCode: 404,
         });
       const u = await authenticateCustomer(req, c);
-      const rows = await query<any>(
-        `SELECT a.id account_id,a.created_at,a.updated_at,a.status_tracker_id,COALESCE(s.name,'Recibido')status_name,a.location_id,a.invoice_id FROM restaurant.accounts a LEFT JOIN restaurant.account_service_status s ON s.id=a.status_tracker_id WHERE a.id=$1 AND a.customer_id=$2`,
-        [Number(req.params.id), u.entity_id],
+      const accountId = Number(req.params.id);
+
+      // 1. Get catalogue_id
+      const catalogueResult = await query<any>(
+        `SELECT c.id as catalogue_id
+         FROM restaurant.accounts a
+         JOIN inventory.catalogues c ON c.location_id = a.location_id
+         WHERE a.id = $1
+         LIMIT 1`,
+        [accountId],
       );
+
+      if (!catalogueResult.length) {
+        throw Object.assign(new Error("No se encontró catálogo para la orden"), {
+          statusCode: 404,
+          code: "CATALOGUE_NOT_FOUND",
+        });
+      }
+      const catalogueId = catalogueResult[0].catalogue_id;
+
+      // 2. Fetch full detail (Secured by matching accounts.customer_id = $3)
+      const detailQuery = `
+        SELECT
+            accounts.id AS account_id,
+            accounts.table_id,
+            accounts.location_id,
+            locations.description_long  AS location_name,
+            locations.description_short AS location_name_short,
+            bu.description_long         AS business_unit_name,
+            bu.color                    AS business_unit_color,
+            $2::integer                 AS catalogue_id,
+            accounts.cost_delivery,
+            accounts.delivery_zone_id,
+            accounts.scheduled_for,
+            (SELECT dz.name FROM restaurant.delivery_zones dz
+              WHERE dz.id = accounts.delivery_zone_id) AS delivery_zone_name,
+            (SELECT pr.nombre FROM restaurant.delivery_zones dz
+              LEFT JOIN public.provincias pr ON pr.provincia_id = dz.provincia_id
+              WHERE dz.id = accounts.delivery_zone_id) AS delivery_zone_province,
+            (SELECT mu.nombre FROM restaurant.delivery_zones dz
+              LEFT JOIN public.municipios mu ON mu.municipio_id = dz.municipio_id
+              WHERE dz.id = accounts.delivery_zone_id) AS delivery_zone_municipio,
+            accounts.status_tracker_id,
+            ass.name  AS status_name,
+            ass.color AS color,
+            ass.icon  AS icon,
+            accounts.invoice_id,
+            accounts.customer_id,
+            accounts.name,
+            accounts.created_at,
+            TO_CHAR((accounts.created_at::TIMESTAMP AT TIME ZONE 'AMERICA/SANTO_DOMINGO'),'DD/MM/yyyy hh:mm:ss AM') as created_at_format,
+            accounts.state_id,
+            accounts.is_delivery,
+            accounts.is_pickup,
+            accounts.is_locked,
+            accounts.uber_order_id,
+            accounts.pedidosya_order_id,
+            accounts.external_order_display_id,
+            accounts.external_plattform_id,
+            accounts.delivery_address,
+            accounts.delivery_phone,
+            accounts.delivery_lat,
+            accounts.delivery_lng,
+            accounts.delivery_notes,
+            accounts.delivery_province,
+            accounts.delivery_city,
+            accounts.delivery_neighborhood,
+            accounts.delivery_reference_point,
+            accounts.invoice_voucher_type_id,
+            accounts.payment_method_id,
+            accounts.payment_breakdown,
+            e.name AS entity_name,
+            e.document_id,
+            e.document_id_type_id,
+            i.invoice_number,
+            account_states.name AS account_state_name,
+            accounts.waiter_id,
+            waiter.name AS waiter_name,
+            accounts.assigned_driver_id,
+            driver.use_fullname AS assigned_driver_name,
+            accounts.user_id AS taken_by_id,
+            taker.use_fullname AS taken_by_name,
+            accounts.accepted_by,
+            accounts.accepted_at,
+            acceptor.use_fullname AS accepted_by_name,
+            i.created_by AS invoiced_by_id,
+            biller.use_fullname AS invoiced_by_name,
+            (
+                SELECT
+                    json_agg(t.*) AS json_agg
+                FROM
+                    (
+                        SELECT
+                            orders.id AS order_id,
+                            orders.account_id,
+                            orders.code,
+                            orders.created_at,
+                            TO_CHAR((orders.created_at::TIMESTAMP) AT TIME ZONE 'AMERICA/SANTO_DOMINGO','DD/MM/yyyy hh:mm:ss AM') as order_created_at,
+                            COALESCE(orders.note, ''::text) AS note,
+                            orders.location_id,
+                            orders.has_tip,
+                            orders.state_id,
+                            order_states.name AS order_state_name,
+                            orders.type_id,
+                            order_types.name AS type_name,
+                            orders.user_id,
+                            users.use_fullname AS user_name,
+                            (
+                                SELECT
+                                    json_agg(t_1.*) AS json_agg
+                                FROM
+                                    (
+                                        SELECT
+                                            order_details.quantity,
+                                            order_details.item_sequence,
+                                            order_details.order_price,
+                                            order_details.original_price,
+                                            order_details.item_note,
+                                            order_details.production_center_id,
+                                            COALESCE(order_details.discount_type, 'NONE') AS discount_type,
+                                            COALESCE(order_details.discount_value, 0) AS discount_value,
+                                            COALESCE(order_details.discount_amount, 0) AS discount_amount,
+                                            order_details.discount_reason,
+                                            order_details.discount_authorized_by,
+                                            discount_user.use_fullname AS discount_authorized_by_name,
+                                            order_details.promotion_id,
+                                            promo.name AS promotion_name,
+                                            promo.code AS promotion_code,
+                                            promo.promotion_type AS promo_type,
+                                            promo.discount_percentage AS promo_discount_percentage,
+                                            order_details.combo_group_id,
+                                            order_details.combo_item_id,
+                                            combo_item.name AS combo_name,
+                                            combo_item.tax_type_id AS combo_tax_type_id,
+                                            combo_item.unit_id AS combo_unit_id,
+                                            cd.catalogue_id,
+                                            cd.item_id,
+                                            i.unit_id,
+                                            u.name AS unit_name,
+                                            i.item_type_id,
+                                            it.name AS item_type_name,
+                                            i.name AS item_name,
+                                            i.note AS item_description,
+                                            i.image_url AS item_image_url,
+                                            i.image_json,
+                                            i.image_name,
+                                            i.attribute_set,
+                                            NULL AS item_attributes,
+                                            i.tax_type_id,
+                                            tt.name AS tax_type_name,
+                                            tt.value AS tax_value,
+                                            i.inventory_product,
+                                            i.negative_sale,
+                                            i.active,
+                                            i.parent_id,
+                                            parent_item.name AS parent_name,
+                                            i.account_category_id,
+                                            ac.name AS account_categorie_name,
+                                            i.item_category_id,
+                                            ic.name AS item_categorie_name,
+                                            NULL AS item_categories,
+                                            cd.max,
+                                            cd.min,
+                                            cd.warehouse_id,
+                                            cd.category_id,
+                                            cat.name AS category_name,
+                                            NULL AS item_in_recipes,
+                                            cd.sale_price AS price,
+                                            cd.cost_price,
+                                            (order_details.quantity * order_details.order_price) AS subtotal,
+                                            ((order_details.quantity * order_details.order_price) - COALESCE(order_details.discount_amount, 0)) AS subtotal_with_discount,
+                                            CASE 
+                                                WHEN i.tax_type_id IS NOT NULL THEN
+                                                    order_details.order_price * (1 + COALESCE(tt.value, 0))
+                                                ELSE 
+                                                    order_details.order_price
+                                            END AS price_with_taxes,
+                                            CASE 
+                                                WHEN i.tax_type_id IS NOT NULL THEN
+                                                    ((order_details.quantity * order_details.order_price) - COALESCE(order_details.discount_amount, 0)) * (1 + COALESCE(tt.value, 0))
+                                                ELSE 
+                                                    (order_details.quantity * order_details.order_price) - COALESCE(order_details.discount_amount, 0)
+                                            END AS total_with_taxes_and_discount,
+                                            CASE 
+                                                WHEN (order_details.quantity * order_details.order_price) > 0 THEN
+                                                    ROUND((COALESCE(order_details.discount_amount, 0) / (order_details.quantity * order_details.order_price)) * 100, 2)
+                                                ELSE 
+                                                    0
+                                            END AS effective_discount_percentage,
+                                            cd.code,
+                                            (
+                                                SELECT
+                                                    json_agg(
+                                                        json_build_object(
+                                                            'id', side_types.id,
+                                                            'name', side_types.name,
+                                                            'location_id', side_types.location_id,
+                                                            'sides', (
+                                                                SELECT
+                                                                    json_agg(
+                                                                        json_build_object(
+                                                                            'id', sides.id,
+                                                                            'side_type_id', sides.side_type_id,
+                                                                            'item_id', sides.item_id,
+                                                                            'item_sequence', order_side_details.item_sequence,
+                                                                            'side_sequence', order_side_details.side_sequence,
+                                                                            'name', sides.name,
+                                                                            'price', sides.price
+                                                                        )
+                                                                    )
+                                                                FROM
+                                                                    restaurant.order_side_details
+                                                                    JOIN restaurant.sides ON sides.id = order_side_details.side_id
+                                                                WHERE
+                                                                    order_side_details.order_id = orders.id
+                                                                    AND order_side_details.item_id = order_details.item_id
+                                                                    AND sides.side_type_id = side_types.id
+                                                                    AND order_side_details.item_sequence = order_details.item_sequence 
+                                                            )
+                                                        )
+                                                    )
+                                                FROM
+                                                    restaurant.side_types
+                                                WHERE
+                                                    EXISTS (
+                                                        SELECT
+                                                            1
+                                                        FROM
+                                                            restaurant.order_side_details
+                                                            JOIN restaurant.sides ON sides.id = order_side_details.side_id
+                                                        WHERE
+                                                            sides.side_type_id = side_types.id
+                                                            AND order_side_details.order_id = orders.id
+                                                            AND order_side_details.item_id = order_details.item_id
+                                                    )
+                                            ) AS side_types
+                                        FROM
+                                            restaurant.order_details
+                                            JOIN inventory.catalogue_details cd ON cd.item_id = order_details.item_id 
+                                                AND cd.catalogue_id = $2
+                                            JOIN inventory.items i ON i.id = cd.item_id
+                                            LEFT JOIN inventory.units u ON u.id = i.unit_id
+                                            LEFT JOIN inventory.item_types it ON it.id = i.item_type_id
+                                            LEFT JOIN inventory.item_categories ic ON ic.id = i.item_category_id
+                                            LEFT JOIN inventory.item_categories cat ON cat.id = cd.category_id
+                                            LEFT JOIN finances.account_categories ac ON ac.id = i.account_category_id
+                                            LEFT JOIN inventory.items parent_item ON parent_item.id = i.parent_id
+                                            LEFT JOIN finances.tax_types tt ON tt.id = i.tax_type_id
+                                            LEFT JOIN common.users discount_user ON discount_user.use_id = order_details.discount_authorized_by
+                                            LEFT JOIN restaurant.promotions promo ON promo.id = order_details.promotion_id
+                                            LEFT JOIN inventory.items combo_item ON combo_item.id = order_details.combo_item_id
+                                        WHERE
+                                            order_details.order_id = orders.id
+                                        ORDER BY 
+                                            order_details.item_sequence ASC
+                                    ) t_1
+                            ) AS order_details
+                        FROM
+                            restaurant.orders
+                            JOIN restaurant.order_states ON order_states.id = orders.state_id
+                            JOIN restaurant.order_types ON order_types.id = orders.type_id
+                            LEFT JOIN common.users ON users.use_id = orders.user_id
+                        WHERE
+                            orders.account_id = accounts.id
+                            AND EXISTS (
+                                SELECT 1 
+                                FROM restaurant.order_details 
+                                WHERE order_details.order_id = orders.id
+                            )
+                        ORDER BY
+                            orders.created_at DESC
+                    ) t
+            ) AS orders
+        FROM
+            restaurant.accounts
+            LEFT JOIN restaurant.waiter ON waiter.id = accounts.waiter_id
+            LEFT JOIN finances.entities e ON accounts.customer_id = e.id
+            LEFT JOIN finances.invoices i ON i.id = accounts.invoice_id
+            LEFT JOIN common.users taker ON taker.use_id = accounts.user_id
+            LEFT JOIN common.users driver ON driver.use_id = accounts.assigned_driver_id
+            LEFT JOIN common.users acceptor ON acceptor.use_id = accounts.accepted_by
+            LEFT JOIN common.users biller ON biller.use_id = i.created_by
+            LEFT JOIN restaurant.account_states ON account_states.id = accounts.state_id
+            LEFT JOIN restaurant.account_service_status ass ON ass.id = accounts.status_tracker_id
+            LEFT JOIN human_resource.locations ON locations.id = accounts.location_id
+            LEFT JOIN human_resource.business_units bu ON bu.id = locations.business_unit_id
+        WHERE accounts.id = $1
+            AND accounts.customer_id = $3;
+      `;
+
+      const rows = await query<any>(detailQuery, [accountId, catalogueId, u.entity_id]);
+
       if (!rows[0])
         throw Object.assign(new Error("Orden no encontrada"), {
           statusCode: 404,
           code: "ORDER_NOT_FOUND",
         });
-      return { success: true, data: rows[0] };
+
+      const account = rows[0];
+      if (account.orders === null) {
+        account.orders = [];
+      }
+
+      return { success: true, data: account };
     },
   );
 }
