@@ -26,6 +26,9 @@ importers:
       fastify:
         specifier: ^5.2.0
         version: 5.8.5
+      jose:
+        specifier: ^6.2.3
+        version: 6.2.3
       jsonwebtoken:
         specifier: ^9.0.2
         version: 9.0.3
@@ -364,6 +367,9 @@ packages:
   ipaddr.js@2.4.0:
     resolution: {integrity: sha512-9VGk3HGanVE6JoZXHiCpnGy5X0jYDnN4EA4lntFPj+1vIWlFhIylq2CrrCOJH9EAhc5CYhq18F2Av2tgoAPsYQ==}
     engines: {node: '>= 10'}
+
+  jose@6.2.3:
+    resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
 
   json-schema-ref-resolver@3.0.0:
     resolution: {integrity: sha512-hOrZIVL5jyYFjzk7+y7n5JDzGlU8rfWDuYyHwGa2WA8/pcmMHezp2xsVwxrebD/Q9t8Nc5DboieySDpCp4WG4A==}
@@ -861,6 +867,8 @@ snapshots:
     optional: true
 
   ipaddr.js@2.4.0: {}
+
+  jose@6.2.3: {}
 
   json-schema-ref-resolver@3.0.0:
     dependencies:

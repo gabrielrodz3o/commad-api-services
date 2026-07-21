@@ -17,7 +17,7 @@ declare module 'fastify' {
 export function registerAuth(app: FastifyInstance) {
   app.addHook('onRequest', async (req, reply) => {
     if (req.method === 'OPTIONS') return // preflight CORS
-    if (req.url === '/health' || req.url === '/') return
+    if (req.url === '/health' || req.url === '/ready' || req.url === '/' || req.url.startsWith('/v1/mobile/')) return
 
     const header = req.headers['authorization'] || ''
     const token = header.startsWith('Bearer ')

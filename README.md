@@ -1,5 +1,25 @@
 # Comandi — servicio de IA (ComandPOS)
 
+> Este servicio también es el backend propietario de las aplicaciones móviles de ComandPOS.
+
+## API móvil
+
+Los contratos están bajo `/v1/mobile/apps/:slug`: bootstrap, catálogo, combos, autenticación OTP/social, perfil/direcciones, checkout idempotente y tracking.
+
+El catálogo reutiliza en `src/modules/mobile/catalog/products.ts` las reglas del POS para stock: último balance del almacén, recetas multinivel, empaque por canal y `fn_combo_producible`. Las promociones respetan sucursal, fecha, día, horario y límites de uso. Expo oculta productos sin existencia salvo que tengan `negative_sale`.
+
+El checkout exige `Authorization: Bearer <customer token>` e `Idempotency-Key`. Los precios se consultan nuevamente en PostgreSQL y la creación usa `restaurant.add_account_with_order`, de modo que cuenta, orden y líneas son atómicas. Cada unidad habilitada debe definir `mobile_app_config.order_user_id`.
+
+### Ambientes y despliegue
+
+- `APP_ENV=test` solo permite `DB_DATABASE=gcode_test`.
+- `APP_ENV=production` solo permite `DB_DATABASE=gcode`.
+- `pnpm migrate` aplica migraciones con checksum y advisory lock.
+- `pnpm check` ejecuta TypeScript y pruebas de contrato.
+- CI publica una imagen GHCR por SHA. Test despliega `develop` automáticamente; producción requiere despacho manual, SHA validado y aprobación del environment.
+
+Para Expo en la red local use `EXPO_PUBLIC_API_BASE_URL=http://192.168.100.65:4080`. `localhost` en un teléfono apunta al propio teléfono; Fastify debe escuchar en `0.0.0.0` y `/ready` debe responder. La rotación de secretos está fuera de este cambio por decisión operativa.
+
 Satélite que orquesta el LLM (OpenAI/Claude) de COMAND POS. **Multi-empresa por request**:
 recibe `location_ids`, resuelve la unidad de negocio, lee su configuración de IA (motor/modelo/llave
 elegida en `business.vue`) y arma el contexto con datos reales de Postgres (solo lectura).

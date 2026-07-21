@@ -5,6 +5,8 @@ import { z } from 'zod'
 const schema = z.object({
   PORT: z.coerce.number().default(4080),
   NODE_ENV: z.string().default('development'),
+  APP_ENV: z.enum(['local','test','production']).default('local'),
+  LOG_LEVEL: z.enum(['fatal','error','warn','info','debug','trace']).default('info'),
 
   COMANDI_SERVICE_TOKEN: z.string().min(1, 'COMANDI_SERVICE_TOKEN es obligatorio'),
   // Mismo secreto JWT que el core: permite que el frontend llame a Comandi directo
@@ -22,6 +24,14 @@ const schema = z.object({
   DB_DATABASE: z.string(),
   DB_USER: z.string(),
   DB_PASSWORD: z.string(),
+  DB_SSL: z.enum(['disable','require']).default('disable'),
+  DB_POOL_MAX: z.coerce.number().int().min(2).max(50).default(10),
+  CUSTOMER_JWT_SECRET: z.string().default(''),
+  OTP_HMAC_SECRET: z.string().default(''),
+  OTP_WEBHOOK_URL: z.string().default(''),
+  OTP_WEBHOOK_TOKEN: z.string().default(''),
+  GOOGLE_CLIENT_IDS: z.string().default(''),
+  APPLE_CLIENT_ID: z.string().default(''),
 
   OPENAI_API_KEY: z.string().default(''),
   ANTHROPIC_API_KEY: z.string().default(''),
@@ -42,6 +52,12 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data
+if (env.APP_ENV === 'production' && env.DB_DATABASE !== 'gcode') {
+  console.error('❌ production solo puede conectar a DB_DATABASE=gcode'); process.exit(1)
+}
+if (env.APP_ENV === 'test' && env.DB_DATABASE !== 'gcode_test') {
+  console.error('❌ test solo puede conectar a DB_DATABASE=gcode_test'); process.exit(1)
+}
 export const corsOrigins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
 // Sufijos permitidos (subdominios). Se normalizan a algo tipo ".comandpos.com".
 export const corsOriginSuffixes = env.CORS_ORIGIN_SUFFIXES

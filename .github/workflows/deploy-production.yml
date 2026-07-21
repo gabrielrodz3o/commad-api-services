@@ -1,0 +1,38 @@
+name: Promote production
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: SHA already deployed and validated in test
+        required: true
+concurrency: { group: command-api-production, cancel-in-progress: false }
+jobs:
+  promote:
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.sha }}' }
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate gcode
+        run: pnpm migrate
+        env:
+          APP_ENV: production
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_DATABASE: gcode
+          DB_USER: ${{ secrets.DB_MIGRATION_USER }}
+          DB_PASSWORD: ${{ secrets.DB_MIGRATION_PASSWORD }}
+          DB_SSL: require
+      - name: Promote exact tested image
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: /opt/command-api/deploy.sh production ghcr.io/${{ github.repository_owner }}/command-api-services:${{ inputs.sha }}
+      - run: curl --fail --retry 12 --retry-delay 5 '${{ vars.HEALTH_URL }}/ready'

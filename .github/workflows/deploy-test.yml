@@ -1,0 +1,38 @@
+name: Deploy test
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [develop]
+concurrency: { group: command-api-test, cancel-in-progress: true }
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    environment: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ github.event.workflow_run.head_sha }}' }
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate gcode_test
+        run: pnpm migrate
+        env:
+          APP_ENV: test
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_DATABASE: gcode_test
+          DB_USER: ${{ secrets.DB_MIGRATION_USER }}
+          DB_PASSWORD: ${{ secrets.DB_MIGRATION_PASSWORD }}
+          DB_SSL: require
+      - name: Deploy immutable image
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: /opt/command-api/deploy.sh test ghcr.io/${{ github.repository_owner }}/command-api-services:${{ github.event.workflow_run.head_sha }}
+      - run: curl --fail --retry 12 --retry-delay 5 '${{ vars.HEALTH_URL }}/ready'
