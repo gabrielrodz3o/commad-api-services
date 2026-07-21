@@ -252,7 +252,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
             user_id: orderUserId,
             is_delivery: b.delivery_type === "delivery",
             is_pickup: b.delivery_type === "pickup",
-            external_platform: null,
+            external_platform: 4,
             delivery_phone: b.customer.phone,
             delivery_contact_name: b.customer.name,
             delivery_address: b.delivery_address || addr?.street || null,
@@ -267,7 +267,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
             type_id: b.delivery_type === "delivery" ? 3 : 2,
             has_tip: false,
             order_note: b.order_note || "",
-            platform_id: null,
+            platform_id: 4,
             state_id: 2,
           };
           const result = await client.query(
