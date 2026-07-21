@@ -12,6 +12,7 @@ COPY . .
 
 ENV NODE_ENV=production
 ENV PORT=4080
+ENV CI=true
 EXPOSE 4080
 
-CMD ["pnpm", "start"]
+CMD ["node_modules/.bin/tsx", "src/server.ts"]
