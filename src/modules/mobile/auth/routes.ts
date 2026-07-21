@@ -99,6 +99,21 @@ export function mobileAuthRoutes(app: FastifyInstance) {
           req.headers["user-agent"] ?? null,
         ],
       );
+      // Look up existing customer to return a masked greeting name
+      const existing = await query<any>(
+        `SELECT i.display_name FROM finances.customer_auth_identities i
+         WHERE i.business_unit_id=$1 AND i.provider='phone' AND i.phone_e164=$2
+         LIMIT 1`,
+        [c.businessUnitId, phone],
+      );
+      const maskName = (full: string): string => {
+        const first = full.trim().split(/\s+/)[0] ?? "";
+        if (first.length <= 2) return first + "****";
+        return first.slice(0, Math.max(2, Math.ceil(first.length / 2))) + "****";
+      };
+      const maskedName = existing[0]?.display_name
+        ? maskName(existing[0].display_name)
+        : null;
       if (env.OTP_WEBHOOK_URL) {
         const response = await fetch(env.OTP_WEBHOOK_URL, {
           method: "POST",
@@ -125,6 +140,7 @@ export function mobileAuthRoutes(app: FastifyInstance) {
         data: {
           challenge_id: id,
           expires_in: 300,
+          ...(maskedName ? { masked_name: maskedName } : {}),
           ...(env.APP_ENV === "local" ? { dev_code: code } : {}),
         },
       };
