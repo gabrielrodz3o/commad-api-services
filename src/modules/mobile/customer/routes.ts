@@ -76,7 +76,23 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
           [u.entity_id],
         ),
         query<any>(
-          `SELECT a.id account_id,a.created_at,a.updated_at,a.is_delivery,a.is_pickup,a.status_tracker_id,COALESCE(st.name,'Recibido')status_name,a.delivery_address,a.delivery_cost,a.location_id,l.description_long location_name,a.invoice_id,COALESCE((SELECT SUM(od.quantity*od.order_price-COALESCE(od.discount_amount,0))FROM restaurant.orders r JOIN restaurant.order_details od ON od.order_id=r.id WHERE r.account_id=a.id),0)::numeric subtotal FROM restaurant.accounts a LEFT JOIN restaurant.account_service_status st ON st.id=a.status_tracker_id LEFT JOIN human_resource.locations l ON l.id=a.location_id WHERE a.customer_id=$1 ORDER BY a.created_at DESC LIMIT 50`,
+          `SELECT a.id account_id,a.created_at,a.updated_at,a.is_delivery,a.is_pickup,a.status_tracker_id,
+                  COALESCE(st.name,'Recibido')status_name,st.color status_color,st.icon status_icon,
+                  a.delivery_address,a.delivery_cost,a.location_id,l.description_long location_name,a.invoice_id,
+                  a.scheduled_for,a.estimated_ready_at,
+                  COALESCE((SELECT SUM(od.quantity*(od.order_price-COALESCE(od.discount_amount,0)))
+                    FROM restaurant.orders r JOIN restaurant.order_details od ON od.order_id=r.id WHERE r.account_id=a.id),0)::numeric subtotal,
+                  COALESCE((SELECT COUNT(*) FROM restaurant.orders r JOIN restaurant.order_details od ON od.order_id=r.id WHERE r.account_id=a.id),0)::int item_count,
+                  COALESCE((SELECT json_agg(x ORDER BY x.item_sequence) FROM (
+                    SELECT DISTINCT ON(od.item_id) od.item_id,od.item_sequence,i.name item_name,i.image_url item_image_url,od.quantity
+                    FROM restaurant.orders r JOIN restaurant.order_details od ON od.order_id=r.id
+                    JOIN inventory.items i ON i.id=od.item_id WHERE r.account_id=a.id
+                    ORDER BY od.item_id,od.item_sequence LIMIT 3
+                  )x),'[]'::json) item_preview
+             FROM restaurant.accounts a
+             LEFT JOIN restaurant.account_service_status st ON st.id=a.status_tracker_id
+             LEFT JOIN human_resource.locations l ON l.id=a.location_id
+            WHERE a.customer_id=$1 ORDER BY a.created_at DESC LIMIT 50`,
           [u.entity_id],
         ),
         query<any>(`SELECT x.*,r.name reward_name,r.description reward_description,r.image_url FROM finances.customer_loyalty_redemptions x JOIN finances.customer_loyalty_rewards r ON r.id=x.reward_id WHERE x.business_unit_id=$1 AND x.entity_id=$2 ORDER BY x.redeemed_at DESC LIMIT 30`, [c.businessUnitId,u.entity_id]),

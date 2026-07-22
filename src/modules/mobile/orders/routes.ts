@@ -435,6 +435,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
             accounts.cost_delivery,
             accounts.delivery_zone_id,
             accounts.scheduled_for,
+            accounts.estimated_ready_at,
             (SELECT dz.name FROM restaurant.delivery_zones dz
               WHERE dz.id = accounts.delivery_zone_id) AS delivery_zone_name,
             (SELECT pr.nombre FROM restaurant.delivery_zones dz
