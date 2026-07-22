@@ -113,7 +113,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
         priced = await query<any>(
           `SELECT DISTINCT ON(cd.item_id)
              cd.item_id,md.menu_id,cd.sale_price::numeric original_price,md.production_center_id,
-             promo.id promotion_id,promo.promotion_type,
+             promo.id promotion_id,promo.promotion_type,promo.discount_percentage,promo.discount_amount,
              CASE promo.promotion_type
                WHEN 'DISCOUNT_PERCENTAGE' THEN GREATEST(cd.sale_price-LEAST(cd.sale_price*(promo.discount_percentage/100),COALESCE(promo.max_discount_amount,cd.sale_price)),0)
                WHEN 'DISCOUNT_FIXED' THEN GREATEST(cd.sale_price-promo.discount_amount,0)
@@ -256,13 +256,33 @@ export function mobileOrderRoutes(app: FastifyInstance) {
         const response = await transaction(async (client) => {
           const details = b.order_details.map((x) => {
             const p = prices.get(x.item_id)!;
+            const originalPrice = Number(p.original_price);
+            const discountedPrice = Number(p.price);
+            const discountAmount = Math.max(0, originalPrice - discountedPrice);
+            const discountTypeMap: Record<string, string> = {
+              DISCOUNT_PERCENTAGE: "PERCENTAGE",
+              DISCOUNT_FIXED: "FIXED_AMOUNT",
+              BUY_X_GET_Y: "BUY_X_GET_Y",
+              PERCENTAGE: "PERCENTAGE",
+              FIXED_AMOUNT: "FIXED_AMOUNT",
+              NONE: "NONE",
+            };
+            const discountType = p.promotion_id
+              ? (discountTypeMap[p.promotion_type] ?? "FIXED_AMOUNT")
+              : "NONE";
             return {
               item_id: x.item_id,
               quantity: x.quantity,
-              order_price: Number(p.price),
-              original_price: Number(p.original_price),
-              discount_amount: Number(p.original_price) - Number(p.price),
-              discount_type: p.promotion_type ?? "NONE",
+              // El POS conserva el precio bruto y declara el descuento aparte.
+              // Esto evita doble descuento en totales, e-CF y al reabrir la orden.
+              order_price: p.promotion_id ? originalPrice : discountedPrice,
+              original_price: originalPrice,
+              discount_amount: discountAmount,
+              discount_type: discountType,
+              discount_value:
+                discountType === "PERCENTAGE"
+                  ? Number(p.discount_percentage ?? 0)
+                  : discountAmount,
               promotion_id: p.promotion_id ?? null,
               item_note: x.item_note || "",
               production_center_id: Number(p.production_center_id),
