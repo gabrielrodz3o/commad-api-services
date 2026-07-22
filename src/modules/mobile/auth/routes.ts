@@ -42,7 +42,7 @@ const appContext = async (slug: string) => {
 const issue = async (identity: any, device: any, req: FastifyRequest) => {
   const refresh = randomBytes(48).toString("base64url");
   const sessions = await query<any>(
-    `INSERT INTO finances.customer_mobile_sessions(identity_id,entity_id,business_unit_id,refresh_token_hash,device_id,platform,app_version,last_ip,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::inet,now()+interval '90 days') RETURNING id`,
+    `INSERT INTO finances.customer_mobile_sessions(identity_id,entity_id,business_unit_id,refresh_token_hash,device_id,platform,app_version,last_ip,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::inet,now()+interval '160 days') RETURNING id`,
     [
       identity.id,
       identity.entity_id,
@@ -357,7 +357,7 @@ export function mobileAuthRoutes(app: FastifyInstance) {
       await query(
         `UPDATE finances.customer_mobile_sessions SET previous_refresh_token_hash=refresh_token_hash,
           previous_refresh_valid_until=now()+interval '2 minutes',refresh_token_hash=$1,last_seen_at=now(),
-          last_ip=$2::inet,expires_at=now()+interval '90 days' WHERE id=$3`,
+          last_ip=$2::inet,expires_at=now()+interval '160 days' WHERE id=$3`,
         [sha(next), req.ip, s.id],
       );
       const access = jwt.sign(
