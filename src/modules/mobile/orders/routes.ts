@@ -332,7 +332,11 @@ export function mobileOrderRoutes(app: FastifyInstance) {
           const first = result.rows[0] || {};
           if (first.account_id)
             await client.query(
-              `UPDATE restaurant.accounts SET payment_method_id=$1,scheduled_for=$2,estimated_ready_at=COALESCE($2,now())+($3::int*interval '1 minute') WHERE id=$4`,
+              `UPDATE restaurant.accounts
+                  SET payment_method_id=$1,
+                      scheduled_for=$2::timestamptz,
+                      estimated_ready_at=COALESCE($2::timestamptz,now())+($3::int*interval '1 minute')
+                WHERE id=$4`,
               [b.payment_method_id, b.scheduled_for ?? null, b.delivery_type === "delivery" ? 40 : 25, first.account_id],
             );
           if (first.account_id) {
