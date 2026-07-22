@@ -255,6 +255,12 @@ export function mobileOrderRoutes(app: FastifyInstance) {
       );
       try {
         const response = await transaction(async (client) => {
+          // El esquema legado guarda varios timestamps operativos sin zona.
+          // La API corre en UTC, mientras POS/call center los crean en hora
+          // dominicana. Limitar la zona a esta transacción mantiene coherentes
+          // cuenta, orden, estados e historiales generados por la función SQL.
+          await client.query("SET LOCAL TIME ZONE 'America/Santo_Domingo'");
+
           const details = b.order_details.map((x) => {
             const p = prices.get(x.item_id)!;
             const currentProduct=stock.get(x.item_id);
@@ -469,7 +475,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
             accounts.customer_id,
             accounts.name,
             accounts.created_at,
-            TO_CHAR((accounts.created_at::TIMESTAMP AT TIME ZONE 'AMERICA/SANTO_DOMINGO'),'DD/MM/yyyy hh:mm:ss AM') as created_at_format,
+            TO_CHAR(accounts.created_at::timestamp,'DD/MM/YYYY HH12:MI:SS AM') as created_at_format,
             accounts.state_id,
             accounts.is_delivery,
             accounts.is_pickup,
@@ -516,7 +522,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
                             orders.account_id,
                             orders.code,
                             orders.created_at,
-                            TO_CHAR((orders.created_at::TIMESTAMP) AT TIME ZONE 'AMERICA/SANTO_DOMINGO','DD/MM/yyyy hh:mm:ss AM') as order_created_at,
+                            TO_CHAR(orders.created_at::timestamp,'DD/MM/YYYY HH12:MI:SS AM') as order_created_at,
                             COALESCE(orders.note, ''::text) AS note,
                             orders.location_id,
                             orders.has_tip,
