@@ -335,9 +335,12 @@ export function mobileOrderRoutes(app: FastifyInstance) {
               `UPDATE restaurant.accounts
                   SET payment_method_id=$1,
                       scheduled_for=$2::timestamptz,
-                      estimated_ready_at=COALESCE($2::timestamptz,now())+($3::int*interval '1 minute')
-                WHERE id=$4`,
-              [b.payment_method_id, b.scheduled_for ?? null, b.delivery_type === "delivery" ? 40 : 25, first.account_id],
+                      estimated_ready_at=COALESCE($2::timestamptz,now())+($3::int*interval '1 minute'),
+                      delivery_zone_id=$4,
+                      cost_delivery=$5,
+                      delivery_cost=$5
+                WHERE id=$6`,
+              [b.payment_method_id, b.scheduled_for ?? null, b.delivery_type === "delivery" ? 40 : 25, account.delivery_zone_id, account.cost_delivery, first.account_id],
             );
           if (first.account_id) {
             const loyalty=(await client.query<any>(`SELECT currency_amount_per_point,expiration_days FROM finances.customer_loyalty_programs WHERE business_unit_id=$1 AND is_active=TRUE`,[c.businessUnitId])).rows[0];
@@ -432,7 +435,13 @@ export function mobileOrderRoutes(app: FastifyInstance) {
             bu.description_long         AS business_unit_name,
             bu.color                    AS business_unit_color,
             $2::integer                 AS catalogue_id,
-            accounts.cost_delivery,
+            COALESCE(NULLIF(accounts.cost_delivery,0),NULLIF(accounts.delivery_cost,0),(
+              SELECT dz.price FROM restaurant.delivery_zones dz
+               WHERE dz.id=COALESCE(accounts.delivery_zone_id,(
+                 SELECT cda.detected_zone_id FROM finances.customer_delivery_addresses cda
+                  WHERE cda.id=accounts.delivery_address_id AND cda.deleted_at IS NULL
+               ))
+            ),0)::numeric AS cost_delivery,
             accounts.delivery_zone_id,
             accounts.scheduled_for,
             accounts.estimated_ready_at,
