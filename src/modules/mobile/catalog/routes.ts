@@ -33,6 +33,10 @@ export function mobileCatalogRoutes(app: FastifyInstance) {
         [q.location_id, catalogueId],
       );
       const menuIds = menus.map((x) => Number(x.id));
+      const configuredMenus = await query<any>(
+        `SELECT id,name,from_time,to_time,available_days FROM restaurant.menus WHERE location_id=$1 AND active=TRUE ORDER BY name`,
+        [q.location_id],
+      );
       const orderTypeId: 2 | 3 = l.use_delivery ? 3 : 2;
       const rows = await Promise.all(menuIds.map((menuId) => getMobileProducts({ menuId, catalogueId, locationId: q.location_id, orderTypeId })));
       const products = [...new Map(rows.flat().map((product) => [`${product.menu_id}:${product.item_id}`, product])).values()];
@@ -85,6 +89,14 @@ export function mobileCatalogRoutes(app: FastifyInstance) {
           },
           menus,
           products: catalogProducts,
+          availability: {
+            open_now: menus.length > 0,
+            has_configured_menu: configuredMenus.length > 0,
+            schedules: configuredMenus.map((menu: any) => ({
+              id: Number(menu.id), name: menu.name, from_time: menu.from_time,
+              to_time: menu.to_time, available_days: menu.available_days,
+            })),
+          },
         },
       };
     },
