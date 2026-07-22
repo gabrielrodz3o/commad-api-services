@@ -78,7 +78,7 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
         query<any>(
           `SELECT a.id account_id,a.created_at,a.updated_at,a.is_delivery,a.is_pickup,a.status_tracker_id,
                   COALESCE(st.name,'Recibido')status_name,st.color status_color,st.icon status_icon,
-                  a.delivery_address,a.delivery_cost,a.location_id,l.description_long location_name,a.invoice_id,
+                  a.delivery_address,COALESCE(a.delivery_cost,a.cost_delivery,0)::numeric delivery_cost,a.location_id,l.description_long location_name,a.invoice_id,
                   a.scheduled_for,a.estimated_ready_at,
                   COALESCE((SELECT SUM(od.quantity*(od.order_price-COALESCE(od.discount_amount,0)))
                     FROM restaurant.orders r JOIN restaurant.order_details od ON od.order_id=r.id WHERE r.account_id=a.id),0)::numeric subtotal,
