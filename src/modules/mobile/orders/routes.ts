@@ -352,11 +352,13 @@ export function mobileOrderRoutes(app: FastifyInstance) {
               );
             }
           }
+          const orderCode=first.order_id?(await client.query<{code:string}>(`SELECT code FROM restaurant.orders WHERE id=$1`,[first.order_id])).rows[0]?.code:null;
           return {
             success: true,
             data: {
               account_id: Number(first.account_id),
               order_id: Number(first.order_id),
+              order_code: orderCode,
               status: "received",
               scheduled_for: b.scheduled_for ?? null,
               tickets: result.rows,
@@ -428,6 +430,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
       const detailQuery = `
         SELECT
             accounts.id AS account_id,
+            (SELECT o.code FROM restaurant.orders o WHERE o.account_id=accounts.id ORDER BY o.created_at DESC,o.id DESC LIMIT 1) AS order_code,
             accounts.table_id,
             accounts.location_id,
             locations.description_long  AS location_name,
