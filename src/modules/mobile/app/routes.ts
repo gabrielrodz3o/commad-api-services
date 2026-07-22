@@ -23,6 +23,7 @@ export function mobileAppRoutes(app: FastifyInstance) {
             config: data.mobile_app_config,
           },
           campaigns: data.campaigns,
+          loyalty: data.loyalty,
           locations: data.locations.map((x: any) => ({
             ...x,
             channels: { delivery: !!x.use_delivery, pickup: !!x.use_pickup },

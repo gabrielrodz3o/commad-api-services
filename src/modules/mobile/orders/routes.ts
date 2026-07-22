@@ -10,6 +10,7 @@ import {
 } from "../shared/context.js";
 import { getMobileProducts } from "../catalog/products.js";
 import { isScheduleOpen, scheduleLabel } from "../shared/schedule.js";
+import { resolveFulfillmentAt } from "../shared/fulfillment.js";
 const bodySchema = z.object({
   location_id: z.number().int().positive(),
   catalogue_id: z.number().int().positive(),
@@ -54,9 +55,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
       const u = await authenticateCustomer(req, c),
         b = bodySchema.parse(req.body),
         key = String(req.headers["idempotency-key"] || "");
-      const fulfillmentAt = b.scheduled_for ? new Date(b.scheduled_for) : new Date();
-      if (b.scheduled_for && (fulfillmentAt.getTime() < Date.now() + 30 * 60_000 || fulfillmentAt.getTime() > Date.now() + 7 * 86400_000))
-        throw Object.assign(new Error("El pedido programado debe ser entre 30 minutos y 7 días"), { statusCode: 400, code: "INVALID_SCHEDULE" });
+      const fulfillmentAt = resolveFulfillmentAt(b.scheduled_for).date;
       if (!/^[A-Za-z0-9._:-]{8,100}$/.test(key))
         throw Object.assign(new Error("Idempotency-Key requerido"), {
           statusCode: 400,
@@ -317,11 +316,14 @@ export function mobileOrderRoutes(app: FastifyInstance) {
               [b.payment_method_id, b.scheduled_for ?? null, b.delivery_type === "delivery" ? 40 : 25, first.account_id],
             );
           if (first.account_id) {
-            const earnedPoints = Math.max(0, Math.floor((details.reduce((sum, item) => sum + (Number(item.order_price) * Number(item.quantity)), 0) + Number(account.delivery_cost || 0)) / 100));
-            if (earnedPoints > 0) await client.query(
-              `INSERT INTO finances.customer_loyalty_ledger(business_unit_id,entity_id,account_id,points,movement_type,description) VALUES($1,$2,$3,$4,'EARN',$5) ON CONFLICT(account_id,movement_type)DO NOTHING`,
-              [c.businessUnitId, u.entity_id, first.account_id, earnedPoints, `Pedido #${first.account_id}`],
-            );
+            const loyalty=(await client.query<any>(`SELECT currency_amount_per_point,expiration_days FROM finances.customer_loyalty_programs WHERE business_unit_id=$1 AND is_active=TRUE`,[c.businessUnitId])).rows[0];
+            if(loyalty){
+              const earnedPoints=Math.max(0,Math.floor((details.reduce((sum,item)=>sum+(Number(item.order_price)*Number(item.quantity)),0)+Number(account.delivery_cost||0))/Number(loyalty.currency_amount_per_point)));
+              if(earnedPoints>0) await client.query(
+                `INSERT INTO finances.customer_loyalty_ledger(business_unit_id,entity_id,account_id,points,movement_type,description,expires_at) VALUES($1,$2,$3,$4,'EARN',$5,CASE WHEN $6::int IS NULL THEN NULL ELSE now()+($6::int*interval '1 day')END) ON CONFLICT(account_id,movement_type)DO NOTHING`,
+                [c.businessUnitId,u.entity_id,first.account_id,earnedPoints,`Pedido #${first.account_id}`,loyalty.expiration_days],
+              );
+            }
           }
           return {
             success: true,

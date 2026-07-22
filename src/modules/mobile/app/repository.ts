@@ -49,7 +49,13 @@ export async function getMobileApp(slug: string) {
       ORDER BY p.priority DESC,p.id DESC LIMIT 12`,
     [rows[0].id],
   );
-  return { ...rows[0], campaigns, locations: locations.map((location: any) => {
+  const loyaltyRows = await query<any>(
+    `SELECT p.is_active,p.currency_amount_per_point,p.expiration_days,p.terms,
+            COALESCE((SELECT json_agg(json_build_object('id',r.id,'name',r.name,'description',r.description,'points_cost',r.points_cost,'reward_type',r.reward_type,'reward_value',r.reward_value,'item_id',r.item_id,'image_url',r.image_url,'terms',r.terms,'stock',r.stock,'valid_days',r.valid_days) ORDER BY r.points_cost,r.id) FROM finances.customer_loyalty_rewards r WHERE r.business_unit_id=p.business_unit_id AND r.is_active=TRUE AND (r.stock IS NULL OR r.stock>0)),'[]'::json) rewards
+       FROM finances.customer_loyalty_programs p WHERE p.business_unit_id=$1`,
+    [rows[0].id],
+  );
+  return { ...rows[0], campaigns, loyalty: loyaltyRows[0]?.is_active ? loyaltyRows[0] : null, locations: locations.map((location: any) => {
     const storeOpen = isScheduleOpen({ start: location.shopping_start_time, end: location.shopping_end_time });
     const zones = (location.delivery_zones ?? []).map((zone: any) => ({
       ...zone,

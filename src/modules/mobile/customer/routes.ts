@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { query } from "../../../db/pool.js";
+import { transaction } from "../../../db/transaction.js";
 import { authenticateCustomer, resolveMobileApp } from "../shared/context.js";
 import { resolveMobileCoverage } from "./coverage.js";
 import { isScheduleOpen, scheduleLabel } from "../shared/schedule.js";
@@ -43,7 +44,13 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
     async (req) => {
       const c = await ctx(req.params.slug),
         u = await authenticateCustomer(req, c);
-      const [e, a, o, loyalty] = await Promise.all([
+      const program = (await query<any>(`SELECT * FROM finances.customer_loyalty_programs WHERE business_unit_id=$1 AND is_active=TRUE`, [c.businessUnitId]))[0];
+      if (program) await query(
+        `INSERT INTO finances.customer_loyalty_ledger(business_unit_id,entity_id,points,movement_type,description,reversed_movement_id)
+         SELECT l.business_unit_id,l.entity_id,-l.points,'EXPIRE','Puntos vencidos',l.id FROM finances.customer_loyalty_ledger l
+         WHERE l.business_unit_id=$1 AND l.entity_id=$2 AND l.movement_type='EARN' AND l.points>0 AND l.expires_at<=now()
+         ON CONFLICT(reversed_movement_id) WHERE reversed_movement_id IS NOT NULL DO NOTHING`, [c.businessUnitId,u.entity_id]);
+      const [e, loyaltyRows, addresses, orders, redemptions] = await Promise.all([
         query<any>(
           `SELECT id,name,document_id,contact_json FROM finances.entities WHERE id=$1 AND is_customer=TRUE`,
           [u.entity_id],
@@ -72,6 +79,7 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
           `SELECT a.id account_id,a.created_at,a.updated_at,a.is_delivery,a.is_pickup,a.status_tracker_id,COALESCE(st.name,'Recibido')status_name,a.delivery_address,a.delivery_cost,a.location_id,l.description_long location_name,a.invoice_id,COALESCE((SELECT SUM(od.quantity*od.order_price-COALESCE(od.discount_amount,0))FROM restaurant.orders r JOIN restaurant.order_details od ON od.order_id=r.id WHERE r.account_id=a.id),0)::numeric subtotal FROM restaurant.accounts a LEFT JOIN restaurant.account_service_status st ON st.id=a.status_tracker_id LEFT JOIN human_resource.locations l ON l.id=a.location_id WHERE a.customer_id=$1 ORDER BY a.created_at DESC LIMIT 50`,
           [u.entity_id],
         ),
+        query<any>(`SELECT x.*,r.name reward_name,r.description reward_description,r.image_url FROM finances.customer_loyalty_redemptions x JOIN finances.customer_loyalty_rewards r ON r.id=x.reward_id WHERE x.business_unit_id=$1 AND x.entity_id=$2 ORDER BY x.redeemed_at DESC LIMIT 30`, [c.businessUnitId,u.entity_id]),
       ]);
       if (!e[0])
         throw Object.assign(new Error("Cliente no encontrado"), {
@@ -80,12 +88,33 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
         });
       return {
         success: true,
-        data: { profile: e[0], loyalty: loyalty[0] ?? { balance: 0, movements: [] }, addresses: a.map((item: any) => ({
+        data: { profile: e[0], loyalty: program ? { ...(loyaltyRows[0] ?? { balance: 0, movements: [] }), program, redemptions } : null, addresses: addresses.map((item: any) => ({
           ...item,
           delivery_open_now: isScheduleOpen({ start: item.shopping_start_time, end: item.shopping_end_time }) && isScheduleOpen({ start: item.detected_zone_active_from, end: item.detected_zone_active_until, days: item.detected_zone_active_days }),
           delivery_schedule_label: scheduleLabel(item.detected_zone_active_from, item.detected_zone_active_until),
-        })), orders: o },
+        })), orders },
       };
+    },
+  );
+  app.post<{ Params: { slug: string; rewardId: string } }>(
+    "/v1/mobile/apps/:slug/me/loyalty/rewards/:rewardId/redeem",
+    async (req) => {
+      const c=await ctx(req.params.slug),u=await authenticateCustomer(req,c),rewardId=Number(req.params.rewardId);
+      if(!Number.isInteger(rewardId)) throw Object.assign(new Error("Recompensa inválida"),{statusCode:400,code:"INVALID_REWARD"});
+      const redemption=await transaction(async(client)=>{
+        const program=(await client.query(`SELECT * FROM finances.customer_loyalty_programs WHERE business_unit_id=$1 AND is_active=TRUE FOR UPDATE`,[c.businessUnitId])).rows[0];
+        if(!program) throw Object.assign(new Error("El programa de puntos no está disponible"),{statusCode:409,code:"LOYALTY_DISABLED"});
+        const reward=(await client.query<any>(`SELECT * FROM finances.customer_loyalty_rewards WHERE id=$1 AND business_unit_id=$2 AND is_active=TRUE AND(stock IS NULL OR stock>0) FOR UPDATE`,[rewardId,c.businessUnitId])).rows[0];
+        if(!reward) throw Object.assign(new Error("Recompensa agotada o no disponible"),{statusCode:409,code:"REWARD_UNAVAILABLE"});
+        const balance=Number((await client.query(`SELECT COALESCE(SUM(points),0)::int balance FROM finances.customer_loyalty_ledger WHERE business_unit_id=$1 AND entity_id=$2`,[c.businessUnitId,u.entity_id])).rows[0].balance);
+        if(balance<Number(reward.points_cost)) throw Object.assign(new Error("No tienes puntos suficientes"),{statusCode:409,code:"INSUFFICIENT_POINTS"});
+        const code=`PG-${crypto.randomUUID().replace(/-/g,'').slice(0,10).toUpperCase()}`;
+        const row=(await client.query<any>(`INSERT INTO finances.customer_loyalty_redemptions(business_unit_id,entity_id,reward_id,code,points_spent,expires_at) VALUES($1,$2,$3,$4,$5,now()+($6::int*interval '1 day')) RETURNING *`,[c.businessUnitId,u.entity_id,reward.id,code,reward.points_cost,reward.valid_days])).rows[0];
+        await client.query(`INSERT INTO finances.customer_loyalty_ledger(business_unit_id,entity_id,points,movement_type,description,redemption_id) VALUES($1,$2,$3,'REDEEM',$4,$5)`,[c.businessUnitId,u.entity_id,-Number(reward.points_cost),`Canje: ${reward.name}`,row.id]);
+        if(reward.stock!==null) await client.query(`UPDATE finances.customer_loyalty_rewards SET stock=stock-1,updated_at=now() WHERE id=$1`,[reward.id]);
+        return {...row,reward_name:reward.name,reward_description:reward.description};
+      });
+      return {success:true,data:redemption};
     },
   );
   app.post<{ Params: { slug: string }; Body: unknown }>(
