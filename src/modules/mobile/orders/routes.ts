@@ -9,6 +9,7 @@ import {
   resolveMobileApp,
 } from "../shared/context.js";
 import { getMobileProducts } from "../catalog/products.js";
+import { isScheduleOpen, scheduleLabel } from "../shared/schedule.js";
 const bodySchema = z.object({
   location_id: z.number().int().positive(),
   catalogue_id: z.number().int().positive(),
@@ -90,6 +91,11 @@ export function mobileOrderRoutes(app: FastifyInstance) {
         throw Object.assign(new Error("Recogida no disponible"), {
           statusCode: 409,
           code: "PICKUP_UNAVAILABLE",
+        });
+      if (!isScheduleOpen({ start: location.shopping_start_time, end: location.shopping_end_time }))
+        throw Object.assign(new Error(`La sucursal está cerrada. Horario: ${scheduleLabel(location.shopping_start_time, location.shopping_end_time)}`), {
+          statusCode: 409,
+          code: "STORE_CLOSED",
         });
       const paymentAllowed = await query(
         `SELECT 1 FROM finances.location_payment_types WHERE location_id=$1 AND payment_type_id=$2 AND is_active=TRUE`,
@@ -210,7 +216,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
       if (b.delivery_address_id) {
         const rows = await query<any>(
           `SELECT cda.*,COALESCE(cda.assigned_location_id,cda.detected_location_id) effective_location_id,
-                  dz.price zone_price
+                  dz.price zone_price,dz.active_from zone_active_from,dz.active_until zone_active_until,dz.active_days zone_active_days
              FROM finances.customer_delivery_addresses cda
              LEFT JOIN restaurant.delivery_zones dz ON dz.id=cda.detected_zone_id
             WHERE cda.id=$1::uuid AND cda.entity_id=$2 AND cda.deleted_at IS NULL`,
@@ -226,6 +232,11 @@ export function mobileOrderRoutes(app: FastifyInstance) {
           throw Object.assign(new Error("La dirección corresponde a otra sucursal"), {
             statusCode: 409,
             code: "ADDRESS_LOCATION_MISMATCH",
+          });
+        if (b.delivery_type === "delivery" && !isScheduleOpen({ start: addr.zone_active_from, end: addr.zone_active_until, days: addr.zone_active_days }))
+          throw Object.assign(new Error(`Delivery cerrado para esta dirección. Horario: ${scheduleLabel(addr.zone_active_from, addr.zone_active_until)}`), {
+            statusCode: 409,
+            code: "DELIVERY_CLOSED",
           });
       }
       const orderUserId = Number(c.config.order_user_id);

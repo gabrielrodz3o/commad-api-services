@@ -3,6 +3,7 @@ import { z } from "zod";
 import { query } from "../../../db/pool.js";
 import { authenticateCustomer, resolveMobileApp } from "../shared/context.js";
 import { resolveMobileCoverage } from "./coverage.js";
+import { isScheduleOpen, scheduleLabel } from "../shared/schedule.js";
 const ctx = async (slug: string) => {
   const c = await resolveMobileApp(slug);
   if (!c)
@@ -53,7 +54,8 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
              CASE WHEN cda.location_point IS NOT NULL THEN(cda.location_point)[0]END longitude,
              COALESCE(cda.assigned_location_id,cda.detected_location_id)effective_location_id,
              cda.detected_location_id,cda.detected_zone_id,dz.name detected_zone_name,dz.price detected_zone_price,
-             l.description_long effective_location_name
+             dz.active_from detected_zone_active_from,dz.active_until detected_zone_active_until,dz.active_days detected_zone_active_days,
+             l.description_long effective_location_name,l.shopping_start_time,l.shopping_end_time
            FROM finances.customer_delivery_addresses cda
            LEFT JOIN restaurant.delivery_zones dz ON dz.id=cda.detected_zone_id
            LEFT JOIN human_resource.locations l ON l.id=COALESCE(cda.assigned_location_id,cda.detected_location_id)
@@ -72,7 +74,11 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
         });
       return {
         success: true,
-        data: { profile: e[0], addresses: a, orders: o },
+        data: { profile: e[0], addresses: a.map((item: any) => ({
+          ...item,
+          delivery_open_now: isScheduleOpen({ start: item.shopping_start_time, end: item.shopping_end_time }) && isScheduleOpen({ start: item.detected_zone_active_from, end: item.detected_zone_active_until, days: item.detected_zone_active_days }),
+          delivery_schedule_label: scheduleLabel(item.detected_zone_active_from, item.detected_zone_active_until),
+        })), orders: o },
       };
     },
   );
