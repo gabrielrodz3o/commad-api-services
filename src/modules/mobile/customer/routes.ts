@@ -48,7 +48,16 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
           [u.entity_id],
         ),
         query<any>(
-          `SELECT id,street,reference,complement,neighborhood,district,province,label,is_default,notes,CASE WHEN location_point IS NOT NULL THEN(location_point)[1]END latitude,CASE WHEN location_point IS NOT NULL THEN(location_point)[0]END longitude,COALESCE(assigned_location_id,detected_location_id)effective_location_id FROM finances.customer_delivery_addresses WHERE entity_id=$1 AND deleted_at IS NULL ORDER BY is_default DESC,created_at`,
+          `SELECT cda.id,cda.street,cda.reference,cda.complement,cda.neighborhood,cda.district,cda.province,cda.label,cda.is_default,cda.notes,
+             CASE WHEN cda.location_point IS NOT NULL THEN(cda.location_point)[1]END latitude,
+             CASE WHEN cda.location_point IS NOT NULL THEN(cda.location_point)[0]END longitude,
+             COALESCE(cda.assigned_location_id,cda.detected_location_id)effective_location_id,
+             cda.detected_location_id,cda.detected_zone_id,dz.name detected_zone_name,dz.price detected_zone_price,
+             l.description_long effective_location_name
+           FROM finances.customer_delivery_addresses cda
+           LEFT JOIN restaurant.delivery_zones dz ON dz.id=cda.detected_zone_id
+           LEFT JOIN human_resource.locations l ON l.id=COALESCE(cda.assigned_location_id,cda.detected_location_id)
+           WHERE cda.entity_id=$1 AND cda.deleted_at IS NULL ORDER BY cda.is_default DESC,cda.created_at`,
           [u.entity_id],
         ),
         query<any>(

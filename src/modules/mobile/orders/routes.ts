@@ -202,9 +202,18 @@ export function mobileOrderRoutes(app: FastifyInstance) {
           );
       }
       let addr: any = null;
+      if (b.delivery_type === "delivery" && !b.delivery_address_id)
+        throw Object.assign(new Error("Selecciona una dirección validada"), {
+          statusCode: 400,
+          code: "DELIVERY_ADDRESS_REQUIRED",
+        });
       if (b.delivery_address_id) {
         const rows = await query<any>(
-          `SELECT * FROM finances.customer_delivery_addresses WHERE id=$1::uuid AND entity_id=$2 AND deleted_at IS NULL`,
+          `SELECT cda.*,COALESCE(cda.assigned_location_id,cda.detected_location_id) effective_location_id,
+                  dz.price zone_price
+             FROM finances.customer_delivery_addresses cda
+             LEFT JOIN restaurant.delivery_zones dz ON dz.id=cda.detected_zone_id
+            WHERE cda.id=$1::uuid AND cda.entity_id=$2 AND cda.deleted_at IS NULL`,
           [b.delivery_address_id, u.entity_id],
         );
         addr = rows[0];
@@ -212,6 +221,11 @@ export function mobileOrderRoutes(app: FastifyInstance) {
           throw Object.assign(new Error("Dirección inválida"), {
             statusCode: 400,
             code: "INVALID_ADDRESS",
+          });
+        if (b.delivery_type === "delivery" && Number(addr.effective_location_id) !== b.location_id)
+          throw Object.assign(new Error("La dirección corresponde a otra sucursal"), {
+            statusCode: 409,
+            code: "ADDRESS_LOCATION_MISMATCH",
           });
       }
       const orderUserId = Number(c.config.order_user_id);
@@ -260,6 +274,9 @@ export function mobileOrderRoutes(app: FastifyInstance) {
             delivery_lat: addr?.location_point?.[1] ?? null,
             delivery_lng: addr?.location_point?.[0] ?? null,
             delivery_address_id: b.delivery_address_id ?? null,
+            delivery_zone_id: addr?.detected_zone_id ?? null,
+            cost_delivery: b.delivery_type === "delivery" ? Number(addr?.zone_price ?? 0) : 0,
+            delivery_cost: b.delivery_type === "delivery" ? Number(addr?.zone_price ?? 0) : 0,
           };
           const order = {
             menu_id: b.menu_id ?? priced[0]?.menu_id,
