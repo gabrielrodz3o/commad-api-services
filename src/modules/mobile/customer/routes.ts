@@ -90,7 +90,7 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
           [u.entity_id],
         );
       const rows = await query<any>(
-        `INSERT INTO finances.customer_delivery_addresses(entity_id,street,reference,complement,neighborhood,district,province,label,is_default,notes,location_point,google_place_id,detected_location_id,detected_zone_id,created_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,ARRAY[$11,$12]::double precision[],$13,$14,$15,now())RETURNING *`,
+        `INSERT INTO finances.customer_delivery_addresses(entity_id,street,reference,complement,neighborhood,district,province,label,is_default,notes,location_point,google_place_id,detected_location_id,detected_zone_id,created_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,point($11,$12),$13,$14,$15,now())RETURNING *`,
         [
           u.entity_id,
           b.street,
@@ -126,7 +126,7 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
           [u.entity_id],
         );
       const rows = await query<any>(
-        `UPDATE finances.customer_delivery_addresses SET street=$1,reference=$2,complement=$3,neighborhood=$4,district=$5,province=$6,label=$7,is_default=$8,notes=$9,location_point=ARRAY[$10,$11]::double precision[],google_place_id=$12,detected_location_id=$13,detected_zone_id=$14 WHERE id=$15::uuid AND entity_id=$16 AND deleted_at IS NULL RETURNING *`,
+        `UPDATE finances.customer_delivery_addresses SET street=$1,reference=$2,complement=$3,neighborhood=$4,district=$5,province=$6,label=$7,is_default=$8,notes=$9,location_point=point($10,$11),google_place_id=$12,detected_location_id=$13,detected_zone_id=$14 WHERE id=$15::uuid AND entity_id=$16 AND deleted_at IS NULL RETURNING *`,
         [
           b.street,
           b.reference,
