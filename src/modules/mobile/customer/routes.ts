@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { query } from "../../../db/pool.js";
 import { authenticateCustomer, resolveMobileApp } from "../shared/context.js";
+import { resolveMobileCoverage } from "./coverage.js";
 const ctx = async (slug: string) => {
   const c = await resolveMobileApp(slug);
   if (!c)
@@ -23,8 +24,19 @@ const address = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   is_default: z.boolean().default(false),
+  google_place_id: z.string().max(255).optional().nullable(),
 });
 export function mobileCustomerRoutes(app: FastifyInstance) {
+  app.post<{ Params: { slug: string }; Body: unknown }>(
+    "/v1/mobile/apps/:slug/me/addresses/coverage",
+    async (req) => {
+      const c = await ctx(req.params.slug);
+      await authenticateCustomer(req, c);
+      const point = z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }).parse(req.body);
+      const coverage = await resolveMobileCoverage(c.businessUnitId, point.latitude, point.longitude);
+      return { success: true, data: coverage ?? { within_coverage: false } };
+    },
+  );
   app.get<{ Params: { slug: string } }>(
     "/v1/mobile/apps/:slug/me",
     async (req) => {
@@ -61,13 +73,15 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
       const c = await ctx(req.params.slug),
         u = await authenticateCustomer(req, c),
         b = address.parse(req.body);
+      const coverage = await resolveMobileCoverage(c.businessUnitId, b.latitude, b.longitude);
+      if (!coverage) throw Object.assign(new Error("La ubicación está fuera de nuestras zonas de delivery"), { statusCode: 422, code: "OUT_OF_COVERAGE" });
       if (b.is_default)
         await query(
           `UPDATE finances.customer_delivery_addresses SET is_default=FALSE WHERE entity_id=$1`,
           [u.entity_id],
         );
       const rows = await query<any>(
-        `INSERT INTO finances.customer_delivery_addresses(entity_id,street,reference,complement,neighborhood,district,province,label,is_default,notes,location_point,created_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,ARRAY[$11,$12]::double precision[],now())RETURNING *`,
+        `INSERT INTO finances.customer_delivery_addresses(entity_id,street,reference,complement,neighborhood,district,province,label,is_default,notes,location_point,google_place_id,detected_location_id,detected_zone_id,created_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,ARRAY[$11,$12]::double precision[],$13,$14,$15,now())RETURNING *`,
         [
           u.entity_id,
           b.street,
@@ -81,6 +95,9 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
           b.notes,
           b.longitude,
           b.latitude,
+          b.google_place_id,
+          coverage.location_id,
+          coverage.zone_id,
         ],
       );
       return { success: true, data: rows[0] };
@@ -92,13 +109,15 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
       const c = await ctx(req.params.slug),
         u = await authenticateCustomer(req, c),
         b = address.parse(req.body);
+      const coverage = await resolveMobileCoverage(c.businessUnitId, b.latitude, b.longitude);
+      if (!coverage) throw Object.assign(new Error("La ubicación está fuera de nuestras zonas de delivery"), { statusCode: 422, code: "OUT_OF_COVERAGE" });
       if (b.is_default)
         await query(
           `UPDATE finances.customer_delivery_addresses SET is_default=FALSE WHERE entity_id=$1`,
           [u.entity_id],
         );
       const rows = await query<any>(
-        `UPDATE finances.customer_delivery_addresses SET street=$1,reference=$2,complement=$3,neighborhood=$4,district=$5,province=$6,label=$7,is_default=$8,notes=$9,location_point=ARRAY[$10,$11]::double precision[] WHERE id=$12::uuid AND entity_id=$13 AND deleted_at IS NULL RETURNING *`,
+        `UPDATE finances.customer_delivery_addresses SET street=$1,reference=$2,complement=$3,neighborhood=$4,district=$5,province=$6,label=$7,is_default=$8,notes=$9,location_point=ARRAY[$10,$11]::double precision[],google_place_id=$12,detected_location_id=$13,detected_zone_id=$14 WHERE id=$15::uuid AND entity_id=$16 AND deleted_at IS NULL RETURNING *`,
         [
           b.street,
           b.reference,
@@ -111,6 +130,9 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
           b.notes,
           b.longitude,
           b.latitude,
+          b.google_place_id,
+          coverage.location_id,
+          coverage.zone_id,
           req.params.id,
           u.entity_id,
         ],

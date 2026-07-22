@@ -8,6 +8,13 @@ export async function getMobileApp(slug: string) {
   const locations = await query<any>(
     `SELECT l.id,l.description_short name,l.description_long description,l.address,l.phone,
        l.use_delivery,l.use_pickup,l.use_zone_delivery,l.service_radius_km,c.id catalogue_id,
+       CASE WHEN l.location_point IS NOT NULL THEN(l.location_point)[1]END latitude,
+       CASE WHEN l.location_point IS NOT NULL THEN(l.location_point)[0]END longitude,
+       COALESCE((SELECT json_agg(json_build_object('id',dz.id,'name',dz.name,'price',dz.price,
+         'polygon',dz.polygon,'color',dz.color,'provincia_id',dz.provincia_id,
+         'municipio_id',dz.municipio_id,'sectors',COALESCE(dz.sectors,'[]'::jsonb)) ORDER BY dz.id)
+         FROM restaurant.delivery_zones dz WHERE dz.location_id=l.id AND dz.status_id=1
+           AND dz.deleted_at IS NULL AND dz.polygon IS NOT NULL),'[]'::json) delivery_zones,
        COALESCE((SELECT json_agg(json_build_object('id',pt.id,'name',pt.name,'icon',pt.icon,'color',pt.color) ORDER BY pt.id)
          FROM finances.location_payment_types lpt
          JOIN finances.invoice_payment_types pt ON pt.id=lpt.payment_type_id
