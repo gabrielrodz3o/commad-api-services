@@ -356,6 +356,18 @@ export function mobileOrderRoutes(app: FastifyInstance) {
       }
     },
   );
+  app.get<{ Params: { slug: string; key: string } }>(
+    "/v1/mobile/apps/:slug/orders/requests/:key",
+    async (req) => {
+      const c=await resolveMobileApp(req.params.slug);
+      if(!c)throw Object.assign(new Error("Aplicación no disponible"),{statusCode:404,code:"APP_NOT_FOUND"});
+      const u=await authenticateCustomer(req,c),key=String(req.params.key||"");
+      if(!/^[A-Za-z0-9._:-]{8,100}$/.test(key))throw Object.assign(new Error("Clave inválida"),{statusCode:400,code:"INVALID_IDEMPOTENCY_KEY"});
+      const row=(await query<any>(`SELECT status,response_json,error_code,account_id,updated_at FROM restaurant.mobile_order_requests WHERE business_unit_id=$1 AND entity_id=$2 AND idempotency_key=$3`,[c.businessUnitId,u.entity_id,key]))[0];
+      if(!row)throw Object.assign(new Error("Solicitud no encontrada"),{statusCode:404,code:"ORDER_REQUEST_NOT_FOUND"});
+      return {success:true,data:{status:row.status,response:row.response_json,error_code:row.error_code,account_id:row.account_id,updated_at:row.updated_at}};
+    },
+  );
   app.get<{ Params: { slug: string; id: string } }>(
     "/v1/mobile/apps/:slug/orders/:id",
     async (req) => {
