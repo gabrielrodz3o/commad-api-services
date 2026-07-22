@@ -26,7 +26,30 @@ export async function getMobileApp(slug: string) {
      WHERE l.business_unit_id=$1 AND l.status_id=1 ORDER BY l.id`,
     [rows[0].id],
   );
-  return { ...rows[0], locations: locations.map((location: any) => {
+  const campaigns = await query<any>(
+    `SELECT p.id,p.code,p.name,p.description,p.promotion_type,p.discount_percentage,p.discount_amount,
+            p.banner_url,p.banner_alt_text,p.mobile_cta_label,p.location_id,p.start_date,p.end_date,p.start_time,p.end_time,
+            COALESCE((SELECT json_agg(pi.item_id ORDER BY pi.item_id) FROM restaurant.promotion_items pi WHERE pi.promotion_id=p.id),'[]'::json) item_ids
+       FROM restaurant.promotions p
+       JOIN human_resource.locations l ON l.id=p.location_id
+      WHERE l.business_unit_id=$1 AND p.is_active=TRUE AND COALESCE(p.is_employee_benefit,FALSE)=FALSE
+        AND COALESCE(p.show_in_mobile,FALSE)=TRUE AND p.banner_url IS NOT NULL
+        AND (NOW() AT TIME ZONE 'America/Santo_Domingo')::date BETWEEN p.start_date::date AND p.end_date::date
+        AND (p.max_uses_total IS NULL OR p.current_uses<p.max_uses_total)
+        AND ((EXTRACT(DOW FROM NOW() AT TIME ZONE 'America/Santo_Domingo')=0 AND p.applies_sunday)OR
+             (EXTRACT(DOW FROM NOW() AT TIME ZONE 'America/Santo_Domingo')=1 AND p.applies_monday)OR
+             (EXTRACT(DOW FROM NOW() AT TIME ZONE 'America/Santo_Domingo')=2 AND p.applies_tuesday)OR
+             (EXTRACT(DOW FROM NOW() AT TIME ZONE 'America/Santo_Domingo')=3 AND p.applies_wednesday)OR
+             (EXTRACT(DOW FROM NOW() AT TIME ZONE 'America/Santo_Domingo')=4 AND p.applies_thursday)OR
+             (EXTRACT(DOW FROM NOW() AT TIME ZONE 'America/Santo_Domingo')=5 AND p.applies_friday)OR
+             (EXTRACT(DOW FROM NOW() AT TIME ZONE 'America/Santo_Domingo')=6 AND p.applies_saturday))
+        AND (p.start_time IS NULL OR p.end_time IS NULL OR
+             (p.start_time<=p.end_time AND (NOW() AT TIME ZONE 'America/Santo_Domingo')::time BETWEEN p.start_time AND p.end_time)OR
+             (p.start_time>p.end_time AND ((NOW() AT TIME ZONE 'America/Santo_Domingo')::time>=p.start_time OR (NOW() AT TIME ZONE 'America/Santo_Domingo')::time<=p.end_time)))
+      ORDER BY p.priority DESC,p.id DESC LIMIT 12`,
+    [rows[0].id],
+  );
+  return { ...rows[0], campaigns, locations: locations.map((location: any) => {
     const storeOpen = isScheduleOpen({ start: location.shopping_start_time, end: location.shopping_end_time });
     const zones = (location.delivery_zones ?? []).map((zone: any) => ({
       ...zone,

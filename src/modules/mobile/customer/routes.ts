@@ -43,10 +43,16 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
     async (req) => {
       const c = await ctx(req.params.slug),
         u = await authenticateCustomer(req, c);
-      const [e, a, o] = await Promise.all([
+      const [e, a, o, loyalty] = await Promise.all([
         query<any>(
           `SELECT id,name,document_id,contact_json FROM finances.entities WHERE id=$1 AND is_customer=TRUE`,
           [u.entity_id],
+        ),
+        query<any>(
+          `SELECT COALESCE(SUM(points),0)::int balance,
+                  COALESCE(json_agg(json_build_object('id',id,'points',points,'type',movement_type,'description',description,'created_at',created_at) ORDER BY created_at DESC) FILTER(WHERE id IS NOT NULL),'[]'::json) movements
+             FROM (SELECT * FROM finances.customer_loyalty_ledger WHERE business_unit_id=$1 AND entity_id=$2 ORDER BY created_at DESC LIMIT 30) x`,
+          [c.businessUnitId, u.entity_id],
         ),
         query<any>(
           `SELECT cda.id,cda.street,cda.reference,cda.complement,cda.neighborhood,cda.district,cda.province,cda.label,cda.is_default,cda.notes,
@@ -74,7 +80,7 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
         });
       return {
         success: true,
-        data: { profile: e[0], addresses: a.map((item: any) => ({
+        data: { profile: e[0], loyalty: loyalty[0] ?? { balance: 0, movements: [] }, addresses: a.map((item: any) => ({
           ...item,
           delivery_open_now: isScheduleOpen({ start: item.shopping_start_time, end: item.shopping_end_time }) && isScheduleOpen({ start: item.detected_zone_active_from, end: item.detected_zone_active_until, days: item.detected_zone_active_days }),
           delivery_schedule_label: scheduleLabel(item.detected_zone_active_from, item.detected_zone_active_until),

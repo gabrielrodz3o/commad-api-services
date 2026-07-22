@@ -23,6 +23,7 @@ const bodySchema = z.object({
   }),
   payment_method_id: z.number().int().positive(),
   order_note: z.string().max(500).optional(),
+  scheduled_for: z.string().datetime({ offset: true }).optional().nullable(),
   order_details: z
     .array(
       z.object({
@@ -53,6 +54,9 @@ export function mobileOrderRoutes(app: FastifyInstance) {
       const u = await authenticateCustomer(req, c),
         b = bodySchema.parse(req.body),
         key = String(req.headers["idempotency-key"] || "");
+      const fulfillmentAt = b.scheduled_for ? new Date(b.scheduled_for) : new Date();
+      if (b.scheduled_for && (fulfillmentAt.getTime() < Date.now() + 30 * 60_000 || fulfillmentAt.getTime() > Date.now() + 7 * 86400_000))
+        throw Object.assign(new Error("El pedido programado debe ser entre 30 minutos y 7 días"), { statusCode: 400, code: "INVALID_SCHEDULE" });
       if (!/^[A-Za-z0-9._:-]{8,100}$/.test(key))
         throw Object.assign(new Error("Idempotency-Key requerido"), {
           statusCode: 400,
@@ -92,7 +96,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
           statusCode: 409,
           code: "PICKUP_UNAVAILABLE",
         });
-      if (!isScheduleOpen({ start: location.shopping_start_time, end: location.shopping_end_time }))
+      if (!isScheduleOpen({ start: location.shopping_start_time, end: location.shopping_end_time }, fulfillmentAt))
         throw Object.assign(new Error(`La sucursal está cerrada. Horario: ${scheduleLabel(location.shopping_start_time, location.shopping_end_time)}`), {
           statusCode: 409,
           code: "STORE_CLOSED",
@@ -233,7 +237,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
             statusCode: 409,
             code: "ADDRESS_LOCATION_MISMATCH",
           });
-        if (b.delivery_type === "delivery" && !isScheduleOpen({ start: addr.zone_active_from, end: addr.zone_active_until, days: addr.zone_active_days }))
+        if (b.delivery_type === "delivery" && !isScheduleOpen({ start: addr.zone_active_from, end: addr.zone_active_until, days: addr.zone_active_days }, fulfillmentAt))
           throw Object.assign(new Error(`Delivery cerrado para esta dirección. Horario: ${scheduleLabel(addr.zone_active_from, addr.zone_active_until)}`), {
             statusCode: 409,
             code: "DELIVERY_CLOSED",
@@ -309,15 +313,23 @@ export function mobileOrderRoutes(app: FastifyInstance) {
           const first = result.rows[0] || {};
           if (first.account_id)
             await client.query(
-              `UPDATE restaurant.accounts SET payment_method_id=$1 WHERE id=$2`,
-              [b.payment_method_id, first.account_id],
+              `UPDATE restaurant.accounts SET payment_method_id=$1,scheduled_for=$2,estimated_ready_at=COALESCE($2,now())+($3::int*interval '1 minute') WHERE id=$4`,
+              [b.payment_method_id, b.scheduled_for ?? null, b.delivery_type === "delivery" ? 40 : 25, first.account_id],
             );
+          if (first.account_id) {
+            const earnedPoints = Math.max(0, Math.floor((details.reduce((sum, item) => sum + (Number(item.order_price) * Number(item.quantity)), 0) + Number(account.delivery_cost || 0)) / 100));
+            if (earnedPoints > 0) await client.query(
+              `INSERT INTO finances.customer_loyalty_ledger(business_unit_id,entity_id,account_id,points,movement_type,description) VALUES($1,$2,$3,$4,'EARN',$5) ON CONFLICT(account_id,movement_type)DO NOTHING`,
+              [c.businessUnitId, u.entity_id, first.account_id, earnedPoints, `Pedido #${first.account_id}`],
+            );
+          }
           return {
             success: true,
             data: {
               account_id: Number(first.account_id),
               order_id: Number(first.order_id),
               status: "received",
+              scheduled_for: b.scheduled_for ?? null,
               tickets: result.rows,
             },
           };
