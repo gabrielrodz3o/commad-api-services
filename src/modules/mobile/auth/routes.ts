@@ -343,7 +343,8 @@ export function mobileAuthRoutes(app: FastifyInstance) {
       const c = await appContext(req.params.slug);
       const b = z.object({ refresh_token: z.string().min(20) }).parse(req.body);
       const rows = await query<any>(
-        `SELECT * FROM finances.customer_mobile_sessions WHERE refresh_token_hash=$1 AND business_unit_id=$2 AND revoked_at IS NULL AND expires_at>now()`,
+        `SELECT * FROM finances.customer_mobile_sessions WHERE business_unit_id=$2 AND revoked_at IS NULL AND expires_at>now()
+          AND(refresh_token_hash=$1 OR(previous_refresh_token_hash=$1 AND previous_refresh_valid_until>now()))`,
         [sha(b.refresh_token), c.businessUnitId],
       );
       const s = rows[0];
@@ -354,7 +355,9 @@ export function mobileAuthRoutes(app: FastifyInstance) {
         });
       const next = randomBytes(48).toString("base64url");
       await query(
-        `UPDATE finances.customer_mobile_sessions SET refresh_token_hash=$1,last_seen_at=now(),last_ip=$2::inet WHERE id=$3`,
+        `UPDATE finances.customer_mobile_sessions SET previous_refresh_token_hash=refresh_token_hash,
+          previous_refresh_valid_until=now()+interval '2 minutes',refresh_token_hash=$1,last_seen_at=now(),
+          last_ip=$2::inet,expires_at=now()+interval '90 days' WHERE id=$3`,
         [sha(next), req.ip, s.id],
       );
       const access = jwt.sign(
