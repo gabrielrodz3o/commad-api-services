@@ -112,7 +112,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
       const ids = [...new Set(b.order_details.map((x) => x.item_id))],
         priced = await query<any>(
           `SELECT DISTINCT ON(cd.item_id)
-             cd.item_id,md.menu_id,cd.sale_price::numeric original_price,md.production_center_id,
+             cd.item_id,md.menu_id,cd.sale_price::numeric original_price,md.production_center_id,COALESCE(tt.value,0)::numeric tax_rate,
              promo.id promotion_id,promo.promotion_type,promo.discount_percentage,promo.discount_amount,
              CASE promo.promotion_type
                WHEN 'DISCOUNT_PERCENTAGE' THEN GREATEST(cd.sale_price-LEAST(cd.sale_price*(promo.discount_percentage/100),COALESCE(promo.max_discount_amount,cd.sale_price)),0)
@@ -121,6 +121,7 @@ export function mobileOrderRoutes(app: FastifyInstance) {
              END::numeric price
            FROM inventory.catalogue_details cd
            JOIN inventory.items i ON i.id=cd.item_id AND i.active=TRUE
+           LEFT JOIN finances.tax_types tt ON tt.id=i.tax_type_id
            JOIN restaurant.menu_details md ON md.item_id=cd.item_id
            JOIN restaurant.menus m ON m.id=md.menu_id AND m.location_id=$3 AND m.active=TRUE
            LEFT JOIN LATERAL(
@@ -256,8 +257,12 @@ export function mobileOrderRoutes(app: FastifyInstance) {
         const response = await transaction(async (client) => {
           const details = b.order_details.map((x) => {
             const p = prices.get(x.item_id)!;
-            const originalPrice = Number(p.original_price);
-            const discountedPrice = Number(p.price);
+            const currentProduct=stock.get(x.item_id);
+            const currentSides=new Map<number,number>((Array.isArray(currentProduct?.sides_categories)?currentProduct.sides_categories:[]).flatMap((category:any)=>(category.sides??[]).map((side:any)=>[Number(side.id),Number(side.price??0)] as [number,number])));
+            const sideGrossTotal=x.sides.reduce((sum,side)=>sum+Number(currentSides.get(side.side_id)??0),0);
+            const sideNetTotal=sideGrossTotal/(1+Number(p.tax_rate??0));
+            const originalPrice = Number(p.original_price)+sideNetTotal;
+            const discountedPrice = Number(p.price)+sideNetTotal;
             const discountAmount = Math.max(0, originalPrice - discountedPrice);
             const discountTypeMap: Record<string, string> = {
               DISCOUNT_PERCENTAGE: "PERCENTAGE",
