@@ -76,7 +76,9 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
           [u.entity_id],
         ),
         query<any>(
-          `SELECT a.id account_id,a.created_at,a.updated_at,a.is_delivery,a.is_pickup,a.status_tracker_id,
+          `SELECT a.id account_id,a.created_at,
+                  TO_CHAR((a.created_at::timestamp AT TIME ZONE 'America/Santo_Domingo'),'DD/MM/YYYY HH12:MI:SS AM') created_at_format,
+                  a.updated_at,a.is_delivery,a.is_pickup,a.status_tracker_id,
                   (SELECT o.code FROM restaurant.orders o WHERE o.account_id=a.id ORDER BY o.created_at DESC,o.id DESC LIMIT 1) order_code,
                   COALESCE(st.name,'Recibido')status_name,st.color status_color,st.icon status_icon,
                   a.delivery_address,COALESCE(NULLIF(a.delivery_cost,0),NULLIF(a.cost_delivery,0),(
