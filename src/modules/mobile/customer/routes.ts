@@ -77,7 +77,7 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
         ),
         query<any>(
           `SELECT a.id account_id,a.created_at,
-                  TO_CHAR((a.created_at::timestamp AT TIME ZONE 'America/Santo_Domingo'),'DD/MM/YYYY HH12:MI:SS AM') created_at_format,
+                  TO_CHAR(a.created_at::timestamp,'DD/MM/YYYY HH12:MI:SS AM') created_at_format,
                   a.updated_at,a.is_delivery,a.is_pickup,a.status_tracker_id,
                   (SELECT o.code FROM restaurant.orders o WHERE o.account_id=a.id ORDER BY o.created_at DESC,o.id DESC LIMIT 1) order_code,
                   COALESCE(st.name,'Recibido')status_name,st.color status_color,st.icon status_icon,
@@ -89,8 +89,16 @@ export function mobileCustomerRoutes(app: FastifyInstance) {
                      ))
                   ),0)::numeric delivery_cost,a.location_id,l.description_long location_name,a.invoice_id,
                   a.scheduled_for,a.estimated_ready_at,
-                  COALESCE((SELECT SUM(od.quantity*(od.order_price-COALESCE(od.discount_amount,0)))
-                    FROM restaurant.orders r JOIN restaurant.order_details od ON od.order_id=r.id WHERE r.account_id=a.id),0)::numeric subtotal,
+                  COALESCE((SELECT SUM(
+                    od.quantity
+                    * (COALESCE(od.original_price,od.order_price)-COALESCE(od.discount_amount,0))
+                    * (1+COALESCE(tt.value,0))
+                  )
+                    FROM restaurant.orders r
+                    JOIN restaurant.order_details od ON od.order_id=r.id
+                    JOIN inventory.items i ON i.id=od.item_id
+                    LEFT JOIN finances.tax_types tt ON tt.id=i.tax_type_id
+                   WHERE r.account_id=a.id),0)::numeric subtotal,
                   COALESCE((SELECT COUNT(*) FROM restaurant.orders r JOIN restaurant.order_details od ON od.order_id=r.id WHERE r.account_id=a.id),0)::int item_count,
                   COALESCE((SELECT json_agg(x ORDER BY x.item_sequence) FROM (
                     SELECT DISTINCT ON(od.item_id) od.item_id,od.item_sequence,i.name item_name,i.image_url item_image_url,od.quantity
