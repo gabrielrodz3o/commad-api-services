@@ -82,10 +82,13 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
         ? Number(sub.threshold_value)
         : (sub as any).default_threshold_value != null ? Number((sub as any).default_threshold_value) : (w.isDelivery ? 45 : 30)
 
-      // Órdenes activas (tracker 1-6) vencidas, de las últimas 4 HORAS.
-      // La ventana corta evita dos males: (a) el backlog inicial al activar el
-      // watcher (cuentas zombis de días previos dispararon ~120 correos el
-      // 2026-07-28) y (b) alertar retrasos ya no accionables.
+      // Órdenes vencidas SOLO DEL DÍA DE HOY (fecha local RD) — las cuentas de
+      // días previos son zombis no accionables (el barrido de 24h disparó ~120
+      // correos el 2026-07-28). Estados (restaurant.account_service_status):
+      //   ORDER_DELAYED    → 1-4 (Nueva/Aceptada/Preparando/Lista): retraso del local.
+      //   DELIVERY_DELAYED → 1-6 (incluye 5 Entregada al Repartidor y 6 En Camino):
+      //                      el reloj corre hasta que el cliente la recibe.
+      //   7 Completada y 8-12 Canceladas/Problemas: jamás alertan.
       // Ámbito: sucursal específica o todas las del BU (respetando overrides:
       // si otra suscripción específica cubre una sucursal, esa manda — el
       // dedupe_key garantiza una sola alerta por orden aunque coincidan).
@@ -113,9 +116,9 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
            ) tot ON TRUE
           WHERE a.is_delivery = ${w.isDelivery ? 'TRUE' : 'FALSE'}
             ${w.isDelivery ? '' : 'AND a.status_tracker_id IS NOT NULL'}
-            AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 6
+            AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND ${w.isDelivery ? 6 : 4}
             AND a.state_id IN (1, 2)
-            AND a.created_at >= now() - interval '4 hours'
+            AND (a.created_at AT TIME ZONE '${TZ}')::date = (now() AT TIME ZONE '${TZ}')::date
             AND a.created_at <= now() - make_interval(mins => $1::int)
             ${scopeSql.replace('$2', '$2')}`,
         [threshold, scopeParam],
