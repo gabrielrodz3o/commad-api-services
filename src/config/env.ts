@@ -40,6 +40,11 @@ const schema = z.object({
   // en business_units.telegram_bot_token. Vacío = canal Telegram deshabilitado.
   TELEGRAM_BOT_TOKEN: z.string().default(''),
 
+  // Notificaciones por correo — clave con la que el core (Nuxt) cifró el
+  // password SMTP en notifications.company_smtp_config (pgp_sym_encrypt).
+  // Vacío = motor de correos deshabilitado (las rutas responden 503).
+  NOTIF_SMTP_ENC_KEY: z.string().default(''),
+
   // CORS multi-tenant: además de CORS_ORIGINS (lista exacta), se permite cualquier
   // subdominio de estos sufijos (ej. pizzagetto.comandpos.com, cliente2.comandpos.com…).
   CORS_ORIGIN_SUFFIXES: z.string().default('.comandpos.com'),
