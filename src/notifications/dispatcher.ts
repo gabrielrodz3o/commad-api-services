@@ -201,12 +201,15 @@ async function prepareOutboxGroups(): Promise<{ digestSent: number; quietDeferre
 // 7 Completada · 8-12 Canceladas/Problemas (7-12 nunca alertan).
 interface WatcherDef { code: 'DELIVERY_DELAYED' | 'ORDER_DELAYED'; where: string; defaultThreshold: number }
 const WATCHERS: WatcherDef[] = [
-  // Delivery retrasado: SOLO flota propia (el restaurante hace el reparto).
-  // Estados 1-6 (todo el ciclo, prep + reparto).
+  // Delivery retrasado: SOLO flota propia (el restaurante hace el reparto) y
+  // SOLO mientras la orden AÚN NO SALIÓ del local — estados 1-4 (Nueva →
+  // Lista). En el estado 5 (Entregada al Repartidor) y 6 (En Camino) el pedido
+  // ya está con el repartidor en la calle: el retraso ya no es del local, así
+  // que no se alerta.
   {
     code: 'DELIVERY_DELAYED',
     where: `a.is_delivery = TRUE AND a.external_plattform_id IS NULL
-            AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 6`,
+            AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 4`,
     defaultThreshold: 45,
   },
   // Pedido retrasado = prep del restaurante. Dine-in/pickup (1-4) y órdenes de
