@@ -156,6 +156,223 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 1b. WATCHERS DE NEGOCIO (ola 2) — NCF, cortesías, mermas, mora, PIN
+//     Cada suscripción activa se evalúa por tick; el dedupe_key garantiza
+//     UNA alerta por día/ventana/factura aunque el tick corra cada 2 min.
+// ─────────────────────────────────────────────────────────────────────────────
+const BUSINESS_WATCHER_CODES = ['NCF_RUNNING_OUT', 'COURTESY_HIGH', 'WASTE_HIGH', 'CUSTOMER_DELINQUENT', 'PIN_FAILED_ATTEMPTS'] as const
+
+async function enqueueOutbox(sub: SubscriptionRow, locationId: number | null, payload: any, dedupeKey: string): Promise<boolean> {
+  const res = await query<any>(
+    `INSERT INTO notifications.outbox (event_type_id, business_unit_id, location_id, payload, dedupe_key)
+     VALUES ($1, $2, $3, $4::jsonb, $5)
+     ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND status <> 'failed'
+     DO NOTHING
+     RETURNING id`,
+    [sub.event_type_id, sub.business_unit_id, locationId, JSON.stringify(payload), dedupeKey],
+  )
+  return res.length > 0
+}
+
+async function runBusinessWatchers(): Promise<{ scanned: number; enqueued: number }> {
+  let scanned = 0
+  let enqueued = 0
+
+  const subs = await query<SubscriptionRow & { event_code: string; default_threshold_value: number | null }>(
+    `SELECT s.*, et.code AS event_code, et.default_threshold_value
+       FROM notifications.subscriptions s
+       JOIN notifications.event_types et ON et.id = s.event_type_id
+      WHERE et.code = ANY($1) AND s.is_enabled AND s.channel_email`,
+    [BUSINESS_WATCHER_CODES as unknown as string[]],
+  )
+
+  for (const sub of subs) {
+    scanned++
+    const threshold = sub.threshold_value != null
+      ? Number(sub.threshold_value)
+      : Number((sub as any).default_threshold_value) || 0
+    // Ámbito: sucursal específica, o todas las del BU si la suscripción es general
+    const locScope = sub.location_id != null
+    try {
+      switch (sub.event_code) {
+        // ── NCF por agotarse: por tipo de comprobante, solo tipos con consumo
+        //    reciente (45d) para no alertar series muertas. 1 alerta/día/tipo.
+        case 'NCF_RUNNING_OUT': {
+          const rows = await query<any>(
+            `SELECT ivt.id AS type_id,
+                    COALESCE(NULLIF(ivt.name, ''), ivt.code, 'Tipo ' || ivt.id) AS type_name,
+                    COUNT(*) FILTER (WHERE s.invoice_id IS NULL AND s.is_active)::int AS remaining,
+                    MIN(s.expiration_date) FILTER (WHERE s.invoice_id IS NULL AND s.is_active) AS next_expiration,
+                    (now() AT TIME ZONE '${TZ}')::date AS local_date
+               FROM finances.invoice_voucher_sequentials s
+               JOIN finances.invoice_voucher_types ivt ON ivt.id = s.invoice_voucher_type_id
+               LEFT JOIN finances.invoices i ON i.id = s.invoice_id
+              WHERE s.business_unit_id = $1
+              GROUP BY ivt.id, ivt.name, ivt.code
+             HAVING COUNT(*) FILTER (WHERE s.invoice_id IS NULL AND s.is_active) < $2
+                AND MAX(i.created_date) >= now() - interval '45 days'`,
+            [sub.business_unit_id, threshold],
+          )
+          for (const r of rows) {
+            const ok = await enqueueOutbox(sub, sub.location_id, {
+              voucher_type: r.type_name,
+              remaining: r.remaining,
+              threshold,
+              next_expiration: r.next_expiration,
+              _title: r.remaining <= 0
+                ? `🚨 NCF AGOTADOS: ${r.type_name}`
+                : `NCF por agotarse: ${r.type_name} (quedan ${r.remaining})`,
+            }, `NCF_RUNNING_OUT:bu${sub.business_unit_id}:type${r.type_id}:loc${sub.location_id ?? 'all'}:${r.local_date}`)
+            if (ok) enqueued++
+          }
+          break
+        }
+
+        // ── Cortesías del día ≥ umbral (RD$). 1 alerta/día/ámbito.
+        case 'COURTESY_HIGH': {
+          const rows = await query<any>(
+            `SELECT COUNT(*)::int AS courtesies,
+                    COALESCE(SUM(c.total_sale_price * COALESCE(c.currency_rate, 1)), 0) AS total,
+                    (now() AT TIME ZONE '${TZ}')::date AS local_date
+               FROM restaurant.courtesies c
+               JOIN human_resource.locations l ON l.id = c.location_id
+              WHERE c.cancelled_at IS NULL
+                AND c.effective_date::date = (now() AT TIME ZONE '${TZ}')::date
+                AND ${locScope ? 'c.location_id = $1' : 'l.business_unit_id = $1'}
+             HAVING COALESCE(SUM(c.total_sale_price * COALESCE(c.currency_rate, 1)), 0) >= $2`,
+            [locScope ? sub.location_id : sub.business_unit_id, threshold],
+          )
+          if (rows.length) {
+            const top = await query<any>(
+              `SELECT c.total_sale_price AS amount, c.authorized_by_fullname, c.reason, c.waiter_fullname
+                 FROM restaurant.courtesies c
+                 JOIN human_resource.locations l ON l.id = c.location_id
+                WHERE c.cancelled_at IS NULL
+                  AND c.effective_date::date = (now() AT TIME ZONE '${TZ}')::date
+                  AND ${locScope ? 'c.location_id = $1' : 'l.business_unit_id = $1'}
+                ORDER BY c.total_sale_price DESC LIMIT 5`,
+              [locScope ? sub.location_id : sub.business_unit_id],
+            )
+            const ok = await enqueueOutbox(sub, sub.location_id, {
+              amount: Number(rows[0].total),
+              courtesies: rows[0].courtesies,
+              threshold,
+              top,
+              _title: `Cortesías del día: ${rows[0].courtesies} por RD$${Number(rows[0].total).toFixed(2)}`,
+            }, `COURTESY_HIGH:loc${sub.location_id ?? 'bu' + sub.business_unit_id}:${rows[0].local_date}`)
+            if (ok) enqueued++
+          }
+          break
+        }
+
+        // ── Merma del día ≥ umbral (costo RD$). 1 alerta/día/ámbito.
+        case 'WASTE_HIGH': {
+          const rows = await query<any>(
+            `SELECT COUNT(*)::int AS wastes,
+                    COALESCE(SUM(w.total_cost), 0) AS total,
+                    (now() AT TIME ZONE '${TZ}')::date AS local_date
+               FROM inventory.waste_headers w
+              WHERE w.cancelled_at IS NULL AND w.status_id <> 4
+                AND w.waste_date::date = (now() AT TIME ZONE '${TZ}')::date
+                AND ${locScope ? 'w.location_id = $1' : 'w.business_unit_id = $1'}
+             HAVING COALESCE(SUM(w.total_cost), 0) >= $2`,
+            [locScope ? sub.location_id : sub.business_unit_id, threshold],
+          )
+          if (rows.length) {
+            const ok = await enqueueOutbox(sub, sub.location_id, {
+              amount: Number(rows[0].total),
+              wastes: rows[0].wastes,
+              threshold,
+              _title: `Merma alta del día: RD$${Number(rows[0].total).toFixed(2)} en ${rows[0].wastes} registro(s)`,
+            }, `WASTE_HIGH:loc${sub.location_id ?? 'bu' + sub.business_unit_id}:${rows[0].local_date}`)
+            if (ok) enqueued++
+          }
+          break
+        }
+
+        // ── Cliente pasó a MOROSA: facturas a crédito que cruzan los 30 días
+        //    vencidas (ventana 31-33d por si el tick no corrió un día).
+        //    1 alerta por factura (dedupe permanente). Umbral = saldo mínimo.
+        case 'CUSTOMER_DELINQUENT': {
+          const rows = await query<any>(
+            `SELECT i.id, i.invoice_number, i.expire_at, i.emission_date,
+                    e.name AS client_name, e.document_id AS client_document,
+                    (i.total_amount * i.currency_rate) - COALESCE((
+                      SELECT SUM(ipd.payment_amount * ip.currency_rate)
+                        FROM finances.invoice_payment_details ipd
+                        JOIN finances.invoice_payments ip ON ip.id = ipd.invoice_payment_id
+                       WHERE ipd.invoice_id = i.id AND ip.status_id <> 4
+                    ), 0) AS pending
+               FROM finances.invoices i
+               JOIN finances.entities e ON e.id = i.entity_id
+              WHERE ${locScope ? 'i.location_id = $1' : 'i.business_unit_id = $1'}
+                AND i.status_id = 1 AND i.invoice_category_id = 2 AND i.invoice_type_id <> 1
+                AND (CURRENT_DATE - i.expire_at) BETWEEN 31 AND 33
+                AND (i.total_amount * i.currency_rate) - COALESCE((
+                      SELECT SUM(ipd.payment_amount * ip.currency_rate)
+                        FROM finances.invoice_payment_details ipd
+                        JOIN finances.invoice_payments ip ON ip.id = ipd.invoice_payment_id
+                       WHERE ipd.invoice_id = i.id AND ip.status_id <> 4
+                    ), 0) >= GREATEST($2::numeric, 0.01)
+              LIMIT 20`,
+            [locScope ? sub.location_id : sub.business_unit_id, threshold],
+          )
+          for (const r of rows) {
+            const ok = await enqueueOutbox(sub, sub.location_id, {
+              invoice_id: r.id,
+              invoice_number: r.invoice_number,
+              client_name: r.client_name,
+              client_document: r.client_document,
+              pending: Number(r.pending),
+              expire_at: r.expire_at,
+              emitted_at: r.emission_date,
+              days_overdue: 31,
+              _title: `Cliente en MORA: ${r.client_name} (RD$${Number(r.pending).toFixed(2)})`,
+            }, `CUSTOMER_DELINQUENT:invoice:${r.id}`)
+            if (ok) enqueued++
+          }
+          break
+        }
+
+        // ── PIN fallidos: ≥ N intentos en 15 min. 1 alerta por ventana de 15 min.
+        case 'PIN_FAILED_ATTEMPTS': {
+          const rows = await query<any>(
+            `SELECT COUNT(*)::int AS attempts,
+                    COUNT(*) FILTER (WHERE p.reason = 'pin_incorrecto')::int AS wrong_pin,
+                    COUNT(*) FILTER (WHERE p.reason = 'sin_perfil')::int AS no_profile,
+                    COUNT(*) FILTER (WHERE p.reason = 'sin_acceso_sucursal')::int AS no_access,
+                    FLOOR(EXTRACT(EPOCH FROM now()) / 900)::bigint AS bucket
+               FROM notifications.pin_failure_log p
+               ${locScope ? '' : 'JOIN human_resource.locations l ON l.id = p.location_id'}
+              WHERE p.created_at >= now() - interval '15 minutes'
+                AND ${locScope ? 'p.location_id = $1' : 'l.business_unit_id = $1'}
+             HAVING COUNT(*) >= $2`,
+            [locScope ? sub.location_id : sub.business_unit_id, Math.max(1, threshold)],
+          )
+          if (rows.length) {
+            const r = rows[0]
+            const ok = await enqueueOutbox(sub, sub.location_id, {
+              attempts: r.attempts,
+              wrong_pin: r.wrong_pin,
+              no_profile: r.no_profile,
+              no_access: r.no_access,
+              window_minutes: 15,
+              threshold: Math.max(1, threshold),
+              _title: `🔒 ${r.attempts} intentos fallidos de PIN de supervisor en 15 min`,
+            }, `PIN_FAILED_ATTEMPTS:loc${sub.location_id ?? 'bu' + sub.business_unit_id}:w${r.bucket}`)
+            if (ok) enqueued++
+          }
+          break
+        }
+      }
+    } catch (e: any) {
+      console.error(`⚠️ watcher ${sub.event_code} falló (sub ${sub.id}):`, e?.message)
+    }
+  }
+  return { scanned, enqueued }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 2. OUTBOX — alertas realtime + watchers
 // ─────────────────────────────────────────────────────────────────────────────
 async function processOutboxRow(row: OutboxRow): Promise<'sent' | 'skipped' | 'retry' | 'failed'> {
@@ -316,7 +533,8 @@ export async function runNotificationsTick() {
     return { disabled: true, reason: 'NOTIF_SMTP_ENC_KEY no configurada' }
   }
   const watchers = await runWatchers().catch((e) => { console.error('⚠️ watchers:', e?.message); return { scanned: 0, enqueued: 0 } })
+  const business = await runBusinessWatchers().catch((e) => { console.error('⚠️ business watchers:', e?.message); return { scanned: 0, enqueued: 0 } })
   const outbox = await processOutbox().catch((e) => { console.error('⚠️ outbox:', e?.message); return { processed: 0, sent: 0, skipped: 0, retried: 0, failed: 0 } })
   const scheduled = await runScheduled().catch((e) => { console.error('⚠️ scheduled:', e?.message); return { due: 0, sent: 0, empty: 0, failed: 0 } })
-  return { disabled: false, watchers, outbox, scheduled }
+  return { disabled: false, watchers, business, outbox, scheduled }
 }

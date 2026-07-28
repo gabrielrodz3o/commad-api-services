@@ -252,6 +252,70 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
         ['Ordenado', fmtDateTime(p.ordered_at)],
       ],
     }),
+    NCF_RUNNING_OUT: () => ({
+      kind: 'alert',
+      rows: [
+        ['Tipo de comprobante', esc(p.voucher_type)],
+        ['Disponibles', `<span style="color:${Number(p.remaining) <= 0 ? '#c92a2a' : '#e8590c'};font-size:16px;font-weight:bold">${esc(p.remaining)}</span> (umbral: ${esc(p.threshold)})`],
+        ['Próximo vencimiento de secuencia', p.next_expiration ? fmtDateTime(p.next_expiration).split(',')[0] : dash],
+        ['Acción requerida', Number(p.remaining) <= 0
+          ? '<span style="color:#c92a2a">SOLICITAR NCF A DGII DE INMEDIATO — no se puede facturar este tipo</span>'
+          : 'Solicitar nueva secuencia de NCF a la DGII antes de que se agoten'],
+      ],
+    }),
+    PLATFORM_ORDER_FAILED: () => ({
+      kind: 'alert',
+      rows: [
+        ['Origen', esc(p.context || p.flow || dash)],
+        ['Cuenta/Orden', esc(p.account_id || dash)],
+        ['Usuario', esc(p.user_name || dash)],
+        ['Error', `<span style="color:#c92a2a">${esc(p.error_message || 'Desconocido')}</span>`],
+        ['Acción requerida', 'Verificar si el pedido del cliente llegó a cocina; si no, reprocesarlo manualmente'],
+      ],
+    }),
+    COURTESY_HIGH: () => ({
+      kind: 'alert',
+      rows: [
+        ['Total en cortesías hoy', `<span style="color:#e8590c;font-size:15px">${money(p.amount)}</span> (umbral ${money(p.threshold)})`],
+        ['Cortesías registradas', esc(p.courtesies)],
+      ],
+      extra: Array.isArray(p.top) && p.top.length
+        ? sectionTitle('Mayores cortesías del día') + dataTable(
+            ['Monto', 'Autorizó', 'Mesero', 'Motivo'],
+            p.top.map((t: any) => [money(t.amount), esc(t.authorized_by_fullname || dash), esc(t.waiter_fullname || dash), esc(t.reason || dash)]),
+            ['right', 'left', 'left', 'left'],
+          )
+        : '',
+    }),
+    WASTE_HIGH: () => ({
+      kind: 'alert',
+      rows: [
+        ['Costo total de mermas hoy', `<span style="color:#c92a2a;font-size:15px">${money(p.amount)}</span> (umbral ${money(p.threshold)})`],
+        ['Registros de merma', esc(p.wastes)],
+        ['Acción sugerida', 'Revisar el detalle en Inventario → Mermas y validar causas'],
+      ],
+    }),
+    CUSTOMER_DELINQUENT: () => ({
+      kind: 'alert',
+      rows: [
+        ['Cliente', `${esc(p.client_name)}${p.client_document ? ` (${esc(p.client_document)})` : ''}`],
+        ['Factura', `#${esc(p.invoice_number)}`],
+        ['Saldo pendiente', `<span style="color:#c92a2a;font-size:15px">${money(p.pending)}</span>`],
+        ['Emitida', fmtDateTime(p.emitted_at)],
+        ['Venció', `${fmtDateTime(p.expire_at).split(',')[0]} — lleva más de 30 días vencida (MOROSA)`],
+        ['Acción sugerida', 'Gestionar cobro / evaluar suspensión de crédito'],
+      ],
+    }),
+    PIN_FAILED_ATTEMPTS: () => ({
+      kind: 'alert',
+      rows: [
+        ['Intentos fallidos', `<span style="color:#c92a2a;font-size:16px;font-weight:bold">${esc(p.attempts)}</span> en ${esc(p.window_minutes)} minutos (umbral ${esc(p.threshold)})`],
+        ['PIN incorrecto', esc(p.wrong_pin)],
+        ['PIN válido sin perfil autorizado', esc(p.no_profile)],
+        ['PIN válido sin acceso a la sucursal', esc(p.no_access)],
+        ['Posible causa', 'Alguien intentando adivinar un PIN de supervisor — verificar cámaras/personal en turno'],
+      ],
+    }),
   }
 
   const def = base[ctx.eventCode]
