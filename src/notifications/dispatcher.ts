@@ -196,10 +196,33 @@ async function prepareOutboxGroups(): Promise<{ digestSent: number; quietDeferre
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. WATCHERS — delivery / pedidos retrasados
 // ─────────────────────────────────────────────────────────────────────────────
-interface WatcherDef { code: 'DELIVERY_DELAYED' | 'ORDER_DELAYED'; isDelivery: boolean }
+// Estados (restaurant.account_service_status): 1 Nueva · 2 Aceptada ·
+// 3 Preparando · 4 Lista · 5 Entregada al Repartidor · 6 En Camino ·
+// 7 Completada · 8-12 Canceladas/Problemas (7-12 nunca alertan).
+interface WatcherDef { code: 'DELIVERY_DELAYED' | 'ORDER_DELAYED'; where: string; defaultThreshold: number }
 const WATCHERS: WatcherDef[] = [
-  { code: 'DELIVERY_DELAYED', isDelivery: true },
-  { code: 'ORDER_DELAYED', isDelivery: false },
+  // Delivery retrasado: SOLO flota propia (el restaurante hace el reparto).
+  // Estados 1-6 (todo el ciclo, prep + reparto).
+  {
+    code: 'DELIVERY_DELAYED',
+    where: `a.is_delivery = TRUE AND a.external_plattform_id IS NULL
+            AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 6`,
+    defaultThreshold: 45,
+  },
+  // Pedido retrasado = prep del restaurante. Dine-in/pickup (1-4) y órdenes de
+  // PLATAFORMA (Uber/PedidosYa) SOLO en prep (1-3): una vez "Lista", el
+  // repartidor de la plataforma la busca, así que ya no es retraso del local.
+  {
+    code: 'ORDER_DELAYED',
+    where: `(
+              (a.is_delivery = FALSE AND a.status_tracker_id IS NOT NULL
+                 AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 4)
+              OR
+              (a.external_plattform_id IS NOT NULL
+                 AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 3)
+            )`,
+    defaultThreshold: 30,
+  },
 ]
 
 async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
@@ -218,7 +241,7 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
       scanned++
       const threshold = sub.threshold_value != null
         ? Number(sub.threshold_value)
-        : (sub as any).default_threshold_value != null ? Number((sub as any).default_threshold_value) : (w.isDelivery ? 45 : 30)
+        : (sub as any).default_threshold_value != null ? Number((sub as any).default_threshold_value) : w.defaultThreshold
 
       // Órdenes vencidas SOLO DEL DÍA DE HOY (fecha local RD) — las cuentas de
       // días previos son zombis no accionables (el barrido de 24h disparó ~120
@@ -241,13 +264,16 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
                 a.created_at,
                 COALESCE(e.name, 'Cliente sin nombre') AS customer_name,
                 a.delivery_phone, a.delivery_address,
+                a.external_order_display_id, ep.name AS platform_name,
                 d.use_fullname AS driver_name,
+                (SELECT o3.code FROM restaurant.orders o3 WHERE o3.account_id = a.id ORDER BY o3.id LIMIT 1) AS order_code,
                 tot.total_amount,
                 FLOOR(EXTRACT(EPOCH FROM (now() - a.created_at)) / 60)::int AS minutes
            FROM restaurant.accounts a
            JOIN human_resource.locations l ON l.id = a.location_id
            LEFT JOIN restaurant.account_service_status ass ON ass.id = a.status_tracker_id
            LEFT JOIN finances.entities e ON e.id = a.customer_id
+           LEFT JOIN restaurant.external_platforms ep ON ep.id = a.external_plattform_id
            LEFT JOIN common.users d ON d.use_id = a.assigned_driver_id
            LEFT JOIN LATERAL (
              SELECT COALESCE(SUM(od.quantity * od.order_price - COALESCE(od.discount_amount, 0)), 0) AS total_amount
@@ -255,16 +281,19 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
                JOIN restaurant.order_details od ON od.order_id = o2.id
               WHERE o2.account_id = a.id
            ) tot ON TRUE
-          WHERE a.is_delivery = ${w.isDelivery ? 'TRUE' : 'FALSE'}
-            ${w.isDelivery ? 'AND a.external_plattform_id IS NULL' : 'AND a.status_tracker_id IS NOT NULL'}
-            AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND ${w.isDelivery ? 6 : 4}
+          WHERE ${w.where}
             AND a.state_id IN (1, 2)
             AND (a.created_at AT TIME ZONE '${TZ}')::date = (now() AT TIME ZONE '${TZ}')::date
             AND a.created_at <= now() - make_interval(mins => $1::int)
-            ${scopeSql.replace('$2', '$2')}`,
+            ${scopeSql}`,
         [threshold, scopeParam],
       )
       for (const o of overdue) {
+        // Identificador legible: código de orden + (plataforma + su nº de pedido).
+        const platformTag = o.platform_name
+          ? `${o.platform_name}${o.external_order_display_id ? ' #' + o.external_order_display_id : ''}`
+          : null
+        const orderLabel = o.order_code || o.account_name || `#${o.account_id}`
         const res = await query<any>(
           `INSERT INTO notifications.outbox (event_type_id, business_unit_id, location_id, payload, dedupe_key)
            VALUES ($1, $2, $3, $4::jsonb, $5)
@@ -277,7 +306,10 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
             o.location_id,
             JSON.stringify({
               account_id: o.account_id,
-              order_code: o.account_name || `#${o.account_id}`,
+              order_code: o.order_code || null,
+              account_name: o.account_name || null,
+              platform: o.platform_name || null,
+              platform_order_id: o.external_order_display_id || null,
               customer_name: o.customer_name,
               customer_phone: o.delivery_phone || null,
               address: o.delivery_address || null,
@@ -289,8 +321,8 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
               threshold,
               status_tracker_id: o.status_tracker_id,
               _title: w.code === 'DELIVERY_DELAYED'
-                ? `Delivery retrasado: ${o.minutes} min (${o.customer_name})`
-                : `Pedido retrasado: ${o.minutes} min (${o.account_name || o.account_id})`,
+                ? `Delivery retrasado: ${o.minutes} min (${orderLabel})`
+                : `Pedido retrasado: ${o.minutes} min (${orderLabel}${platformTag ? ' · ' + platformTag : ''})`,
             }),
             `${w.code}:account:${o.account_id}`,
           ],

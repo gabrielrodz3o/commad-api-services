@@ -229,7 +229,8 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
     DELIVERY_DELAYED: () => ({
       kind: 'alert',
       rows: [
-        ['Orden', esc(p.order_code || p.account_id)],
+        ['Orden', esc(p.order_code || p.account_name || `#${p.account_id}`)],
+        ['Cuenta', esc(p.account_name || dash)],
         ['Retraso', `<span style="color:#c92a2a;font-size:15px">${esc(p.minutes)} min</span> (umbral ${esc(p.threshold)} min)`],
         ['Estado actual', esc(p.status_name || dash)],
         ['Cliente', esc(p.customer_name || dash)],
@@ -243,7 +244,10 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
     ORDER_DELAYED: () => ({
       kind: 'alert',
       rows: [
-        ['Orden', esc(p.order_code || p.order_id)],
+        ['Orden', esc(p.order_code || p.account_name || `#${p.account_id}`)],
+        ['Cuenta', esc(p.account_name || dash)],
+        // Identificador de plataforma (Uber Eats / PedidosYa) cuando aplica.
+        ...(p.platform ? [['Plataforma', `${esc(p.platform)}${p.platform_order_id ? ' · pedido #' + esc(p.platform_order_id) : ''}`] as [string, string]] : []),
         ['Retraso', `<span style="color:#c92a2a;font-size:15px">${esc(p.minutes)} min</span> (umbral ${esc(p.threshold)} min)`],
         ['Estado actual', esc(p.status_name || dash)],
         ['Cliente', esc(p.customer_name || dash)],
