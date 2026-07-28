@@ -270,11 +270,16 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
     PLATFORM_ORDER_FAILED: () => ({
       kind: 'alert',
       rows: [
+        ['Cliente', esc(p.customer_name || 'Sin nombre')],
+        ['Teléfono', esc(p.phone || dash)],
+        ['Dirección', esc(p.address || dash)],
+        ['Tipo', esc(p.order_type || dash)],
+        ['Artículos', p.items_count != null ? esc(p.items_count) : dash],
+        ['Intentó', esc(p.attempted_by || 'N/D')],
         ['Origen', esc(p.context || p.flow || dash)],
-        ['Cuenta/Orden', esc(p.account_id || dash)],
-        ['Usuario', esc(p.user_name || dash)],
         ['Error', `<span style="color:#c92a2a">${esc(p.error_message || 'Desconocido')}</span>`],
-        ['Acción requerida', 'Verificar si el pedido del cliente llegó a cocina; si no, reprocesarlo manualmente'],
+        ['Detalle técnico', esc(p.error_detail || dash)],
+        ['Acción requerida', '<strong>Verificar si el pedido llegó a cocina; si no, tomarlo de nuevo con el cliente/teléfono de arriba.</strong>'],
       ],
     }),
     COURTESY_HIGH: () => ({
