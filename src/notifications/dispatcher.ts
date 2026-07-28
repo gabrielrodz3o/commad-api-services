@@ -224,8 +224,11 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
       // días previos son zombis no accionables (el barrido de 24h disparó ~120
       // correos el 2026-07-28). Estados (restaurant.account_service_status):
       //   ORDER_DELAYED    → 1-4 (Nueva/Aceptada/Preparando/Lista): retraso del local.
-      //   DELIVERY_DELAYED → 1-6 (incluye 5 Entregada al Repartidor y 6 En Camino):
-      //                      el reloj corre hasta que el cliente la recibe.
+      //   DELIVERY_DELAYED → 1-6, SOLO flota propia (external_plattform_id IS NULL).
+      //     En Uber Eats/PedidosYa el reparto lo hace la plataforma: el
+      //     restaurante solo controla hasta "Orden Lista", así que esas órdenes
+      //     NO cuentan como delivery retrasado (el repartidor de la plataforma
+      //     las busca). Se excluyen del watcher.
       //   7 Completada y 8-12 Canceladas/Problemas: jamás alertan.
       // Ámbito: sucursal específica o todas las del BU (respetando overrides:
       // si otra suscripción específica cubre una sucursal, esa manda — el
@@ -253,7 +256,7 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
               WHERE o2.account_id = a.id
            ) tot ON TRUE
           WHERE a.is_delivery = ${w.isDelivery ? 'TRUE' : 'FALSE'}
-            ${w.isDelivery ? '' : 'AND a.status_tracker_id IS NOT NULL'}
+            ${w.isDelivery ? 'AND a.external_plattform_id IS NULL' : 'AND a.status_tracker_id IS NOT NULL'}
             AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND ${w.isDelivery ? 6 : 4}
             AND a.state_id IN (1, 2)
             AND (a.created_at AT TIME ZONE '${TZ}')::date = (now() AT TIME ZONE '${TZ}')::date
