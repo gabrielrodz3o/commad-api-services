@@ -78,67 +78,103 @@ export function dataTable(headers: string[], rows: string[][], align: Array<'lef
 // propios renders en src/email/reports/*).
 // ─────────────────────────────────────────────────────────────────────────────
 
+const TZ = 'America/Santo_Domingo'
+
+export function fmtDateTime(v: any): string {
+  if (!v) return '—'
+  try {
+    return new Date(v).toLocaleString('es-DO', {
+      timeZone: TZ, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+    })
+  } catch { return String(v) }
+}
+
 interface EventContext {
   eventCode: string
   eventName: string
   business: string
   location: string | null
   payload: any
+  /** Momento en que ocurrió el evento (created_at del outbox). */
+  occurredAt?: string | null
 }
 
 export function renderEventEmail(ctx: EventContext): { subject: string; html: string } {
   const p = ctx.payload || {}
   const place = ctx.location ? `${ctx.business} — ${ctx.location}` : ctx.business
   const title = p._title || ctx.eventName
+  const dash = '—'
 
-  const base: Record<string, () => { kind: 'alert' | 'info'; rows: Array<[string, string]> }> = {
+  const base: Record<string, () => { kind: 'alert' | 'info'; rows: Array<[string, string]>; extra?: string }> = {
     BOX_SHIFT_CLOSE: () => ({
       kind: 'info',
       rows: [
         ['Caja', esc(p.box_name)],
-        ['Cerró', esc(p.closed_by)],
+        ['Cerró', esc(p.closed_by || dash)],
+        ['Turno', `${fmtDateTime(p.opened_at)} → ${fmtDateTime(p.closed_at)}`],
         ['Total contado', money(p.total_closed)],
-        ['Diferencia', p.difference ? money(p.difference) : 'Cuadrada ✔'],
+        ['Diferencia', Math.abs(Number(p.difference) || 0) >= 0.01
+          ? `<span style="color:#d9480f">${money(p.difference)}</span>`
+          : '<span style="color:#2f9e44">Cuadrada ✔</span>'],
       ],
+      extra: currenciesTable(p.currencies),
     }),
     BOX_CASH_VARIANCE: () => ({
       kind: 'alert',
       rows: [
         ['Caja', esc(p.box_name)],
-        ['Cerró', esc(p.closed_by)],
-        ['Diferencia', `${Number(p.difference) > 0 ? 'SOBRANTE' : 'FALTANTE'} ${money(Math.abs(Number(p.difference) || 0))}`],
+        ['Cerró', esc(p.closed_by || dash)],
+        ['Turno', `${fmtDateTime(p.opened_at)} → ${fmtDateTime(p.closed_at)}`],
+        ['Diferencia', `<span style="color:#c92a2a;font-size:15px">${Number(p.difference) > 0 ? 'SOBRANTE' : 'FALTANTE'} ${money(Math.abs(Number(p.difference) || 0))}</span>`],
         ['Total contado', money(p.total_closed)],
       ],
+      extra: currenciesTable(p.currencies),
     }),
     EMPLOYEE_DISCOUNT: () => ({
       kind: 'alert',
       rows: [
-        ['Descuento total', money(p.total_discount)],
-        ['Porcentaje máx.', `${esc(p.percent)}%`],
-        ['Artículos', esc(p.items_count)],
+        ['Descuento total', `<span style="font-size:15px">${money(p.total_discount)}</span> (${esc(p.percent)}% máx.)`],
+        ['Subtotal antes del descuento', money(p.subtotal_before)],
+        ['Cuenta', esc(p.table_name ? `Mesa ${p.table_name}` : p.account_name || `#${p.account_id}`)],
+        ['Mesero', esc(p.waiter_name || dash)],
         ['Autorizó', esc(p.authorized_by_name || 'N/D')],
-        ['Motivo', esc(p.reason || '—')],
-        ['Cuenta', esc(p.account_id)],
+        ['Motivo', esc(p.reason || dash)],
       ],
+      extra: Array.isArray(p.items) && p.items.length
+        ? sectionTitle(`Artículos descontados (${p.items.length})`) + dataTable(
+            ['Artículo', 'Cant.', 'Precio', 'Descuento', '%'],
+            p.items.map((i: any) => [
+              esc(i.name), esc(i.quantity), money(i.price), money(i.discount_amount), `${esc(i.percent)}%`,
+            ]),
+            ['left', 'right', 'right', 'right', 'right'],
+          )
+        : '',
     }),
     INVOICE_CANCELLED: () => ({
       kind: 'alert',
       rows: [
-        ['Factura', `#${esc(p.invoice_number)}`],
-        ['Monto', money(p.total_amount)],
-        ['Anuló', esc(p.cancelled_by)],
-        ['Motivo', esc(p.reason || '—')],
+        ['Factura', `#${esc(p.invoice_number)}${p.invoice_ncf ? ` · NCF ${esc(p.invoice_ncf)}` : ''}`],
+        ['Monto', `<span style="font-size:15px">${money(p.total_amount)}</span>`],
+        ['Cliente', `${esc(p.client_name || 'Consumidor final')}${p.client_document ? ` (${esc(p.client_document)})` : ''}`],
+        ['Emitida', `${fmtDateTime(p.emitted_at)}${p.emitted_by ? ` por ${esc(p.emitted_by)}` : ''}`],
+        ['Anuló', esc(p.cancelled_by || 'N/D')],
+        ['Motivo', esc(p.reason || dash)],
       ],
     }),
     ORDER_ITEM_DELETED: () => ({
       kind: 'alert',
       rows: [
         ['Artículo', esc(p.item_name)],
-        ['Cantidad', esc(p.quantity ?? '—')],
-        ['Orden', esc(p.order_code || p.order_id)],
-        ['Usuario', esc(p.deleted_by || p.cancelled_by || 'N/D')],
-        ['Motivo', esc(p.reason || '—')],
+        ['Cantidad × precio', `${esc(p.quantity ?? dash)} × ${money(p.unit_price)}`],
+        ['Valor perdido', `<span style="color:#c92a2a;font-size:15px">${money(p.total_value)}</span>`],
+        ['Orden', `${esc(p.order_code || p.order_id)}${p.order_type ? ` · ${esc(p.order_type)}` : ''}`],
+        ['Cuenta', esc(p.table_name ? `Mesa ${p.table_name}` : p.account_name || dash)],
+        ['Mesero', esc(p.waiter_name || dash)],
+        ['Ordenado', fmtDateTime(p.order_created_at)],
+        ['Borró', esc(p.deleted_by || p.cancelled_by || 'N/D')],
+        ['Motivo', esc(p.reason || dash)],
         ['Inventario devuelto', p.return_inventory ? 'Sí' : 'No'],
+        ['Nota del artículo', esc(p.item_note || dash)],
       ],
     }),
     INVOICE_MODIFIED: () => ({
@@ -146,9 +182,11 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
       rows: p.scope === 'payment_cancelled'
         ? [
             ['Cambio', 'Pago anulado'],
-            ['Factura', `#${esc(p.invoice_number)}`],
-            ['Monto del pago', money(p.amount)],
-            ['Usuario', esc(p.modified_by || 'N/D')],
+            ['Factura', `#${esc(p.invoice_number)}${p.invoice_ncf ? ` · NCF ${esc(p.invoice_ncf)}` : ''} (total ${money(p.invoice_total)})`],
+            ['Cliente', esc(p.client_name || 'Consumidor final')],
+            ['Pago anulado', `<span style="font-size:15px">${money(p.amount)}</span> · ${esc(p.payment_type || 'N/D')}`],
+            ['Pagado originalmente', fmtDateTime(p.paid_at)],
+            ['Anuló', esc(p.modified_by || 'N/D')],
           ]
         : [
             ['Cambio', 'Corrección de cierre de caja'],
@@ -156,64 +194,105 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
             ['Contado', `${esc(p.previous_counted)} → ${esc(p.new_counted)}`],
             ['Δ dinero', money(p.money_delta)],
             ['Tipo', esc(p.adjustment_type)],
-            ['Nota', esc(p.notes || '—')],
+            ['Nota', esc(p.notes || dash)],
           ],
     }),
     STOCK_COUNT_CLOSED: () => ({
       kind: 'info',
       rows: [
-        ['Sesión', `#${esc(p.session_id)}`],
+        ['Almacén', esc(p.warehouse_name || `Sesión #${p.session_id}`)],
+        ['Cerró', esc(p.closed_by || dash)],
         ['Ítems contados', esc(p.items_counted)],
         ['Con varianza', esc(p.items_with_variance)],
-        ['Valor del ajuste', money(p.total_variance_value)],
+        ['Valor del ajuste', `<span style="font-size:15px;color:${Number(p.total_variance_value) < 0 ? '#c92a2a' : '#2f9e44'}">${money(p.total_variance_value)}</span>`],
+        ['Nota', esc(p.note || dash)],
       ],
+      extra: (Array.isArray(p.variance_by_category) && p.variance_by_category.length
+        ? sectionTitle('Varianza por categoría') + dataTable(
+            ['Categoría', 'Ítems', 'Con varianza', 'Valor'],
+            p.variance_by_category.map((c: any) => [
+              esc(c.category_name || 'Sin categoría'), esc(c.total_items), esc(c.items_with_variance), money(c.total_variance_value),
+            ]),
+            ['left', 'right', 'right', 'right'],
+          )
+        : '') +
+        (Array.isArray(p.top_variance_items) && p.top_variance_items.length
+          ? sectionTitle('Mayores varianzas') + dataTable(
+              ['Ítem', 'Teórico', 'Contado', 'Varianza', 'Valor'],
+              p.top_variance_items.slice(0, 10).map((i: any) => [
+                esc(i.item_name), esc(i.theoretical_qty), esc(i.counted_qty), esc(i.variance_qty), money(i.variance_value),
+              ]),
+              ['left', 'right', 'right', 'right', 'right'],
+            )
+          : ''),
     }),
     DELIVERY_DELAYED: () => ({
       kind: 'alert',
       rows: [
         ['Orden', esc(p.order_code || p.account_id)],
-        ['Cliente', esc(p.customer_name || '—')],
-        ['Minutos transcurridos', esc(p.minutes)],
-        ['Umbral', `${esc(p.threshold)} min`],
-        ['Estado', esc(p.status_name || '—')],
+        ['Retraso', `<span style="color:#c92a2a;font-size:15px">${esc(p.minutes)} min</span> (umbral ${esc(p.threshold)} min)`],
+        ['Estado actual', esc(p.status_name || dash)],
+        ['Cliente', esc(p.customer_name || dash)],
+        ['Teléfono', esc(p.customer_phone || dash)],
+        ['Dirección', esc(p.address || dash)],
+        ['Motorista', esc(p.driver_name || 'Sin asignar')],
+        ['Monto de la orden', money(p.total_amount)],
+        ['Ordenado', fmtDateTime(p.ordered_at)],
       ],
     }),
     ORDER_DELAYED: () => ({
       kind: 'alert',
       rows: [
         ['Orden', esc(p.order_code || p.order_id)],
-        ['Minutos en preparación', esc(p.minutes)],
-        ['Umbral', `${esc(p.threshold)} min`],
-        ['Estado', esc(p.status_name || '—')],
+        ['Retraso', `<span style="color:#c92a2a;font-size:15px">${esc(p.minutes)} min</span> (umbral ${esc(p.threshold)} min)`],
+        ['Estado actual', esc(p.status_name || dash)],
+        ['Cliente', esc(p.customer_name || dash)],
+        ['Teléfono', esc(p.customer_phone || dash)],
+        ['Monto de la orden', money(p.total_amount)],
+        ['Ordenado', fmtDateTime(p.ordered_at)],
       ],
     }),
   }
 
   const def = base[ctx.eventCode]
-  const { kind, rows } = def
+  const resolved = def
     ? def()
-    : { kind: 'info' as const, rows: Object.entries(p).filter(([k]) => !k.startsWith('_')).map(([k, v]) => [k, esc(v)] as [string, string]) }
+    : { kind: 'info' as const, rows: Object.entries(p).filter(([k]) => !k.startsWith('_')).map(([k, v]) => [k, esc(v)] as [string, string]), extra: '' }
 
-  // Extra: top varianzas en el correo de conteo
-  let extra = ''
-  if (ctx.eventCode === 'STOCK_COUNT_CLOSED' && Array.isArray(p.top_variance_items) && p.top_variance_items.length) {
-    extra = `<div style="margin-top:16px;font-size:13px;font-weight:bold;color:#495057">Mayores varianzas</div>` +
-      dataTable(
-        ['Ítem', 'Teórico', 'Contado', 'Varianza', 'Valor'],
-        p.top_variance_items.slice(0, 10).map((i: any) => [
-          esc(i.item_name), esc(i.theoretical_qty), esc(i.counted_qty), esc(i.variance_qty), money(i.variance_value),
-        ]),
-        ['left', 'right', 'right', 'right', 'right'],
-      )
-  }
+  // Fila estándar: cuándo ocurrió el evento (todas las alertas la llevan)
+  const rows: Array<[string, string]> = [
+    ...resolved.rows,
+    ['Fecha del evento', fmtDateTime(ctx.occurredAt)],
+  ]
 
   return {
     subject: `[${place}] ${title}`,
     html: layout({
-      kind,
+      kind: resolved.kind,
       title,
       subtitle: place,
-      bodyHtml: kvTable(rows) + extra + (p._body ? `<div style="margin-top:14px;font-size:13px;color:#495057">${esc(p._body)}</div>` : ''),
+      bodyHtml: kvTable(rows) + (resolved.extra || '') + (p._body ? `<div style="margin-top:14px;font-size:13px;color:#495057">${esc(p._body)}</div>` : ''),
     }),
   }
 }
+
+function sectionTitle(text: string): string {
+  return `<div style="margin-top:16px;margin-bottom:4px;font-size:13px;font-weight:bold;color:#495057">${esc(text)}</div>`
+}
+
+/** Desglose por moneda de un cierre de caja. */
+function currenciesTable(currencies: any): string {
+  if (!Array.isArray(currencies) || !currencies.length) return ''
+  return sectionTitle('Desglose por moneda') + dataTable(
+    ['Moneda', 'Apertura', 'Esperado', 'Contado', 'Diferencia'],
+    currencies.map((c: any) => [
+      esc(c.currency || dashSafe(c.currency)), money(c.opened), money(c.expected), money(c.counted),
+      Math.abs(Number(c.difference) || 0) >= 0.01
+        ? `<span style="color:${Number(c.difference) > 0 ? '#e8590c' : '#c92a2a'}">${money(c.difference)}</span>`
+        : '<span style="color:#2f9e44">✔</span>',
+    ]),
+    ['left', 'right', 'right', 'right', 'right'],
+  )
+}
+
+function dashSafe(v: any): string { return v == null || v === '' ? '—' : String(v) }

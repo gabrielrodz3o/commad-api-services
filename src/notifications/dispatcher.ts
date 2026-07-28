@@ -90,10 +90,24 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
       const scopeParam = sub.location_id ?? sub.business_unit_id
       const overdue = await query<any>(
         `SELECT a.id AS account_id, a.location_id, a.name AS account_name,
-                a.status_tracker_id,
+                a.status_tracker_id, ass.name AS status_name,
+                a.created_at,
+                COALESCE(e.name, 'Cliente sin nombre') AS customer_name,
+                a.delivery_phone, a.delivery_address,
+                d.use_fullname AS driver_name,
+                tot.total_amount,
                 FLOOR(EXTRACT(EPOCH FROM (now() - a.created_at)) / 60)::int AS minutes
            FROM restaurant.accounts a
            JOIN human_resource.locations l ON l.id = a.location_id
+           LEFT JOIN restaurant.account_service_status ass ON ass.id = a.status_tracker_id
+           LEFT JOIN finances.entities e ON e.id = a.customer_id
+           LEFT JOIN common.users d ON d.use_id = a.assigned_driver_id
+           LEFT JOIN LATERAL (
+             SELECT COALESCE(SUM(od.quantity * od.order_price - COALESCE(od.discount_amount, 0)), 0) AS total_amount
+               FROM restaurant.orders o2
+               JOIN restaurant.order_details od ON od.order_id = o2.id
+              WHERE o2.account_id = a.id
+           ) tot ON TRUE
           WHERE a.is_delivery = ${w.isDelivery ? 'TRUE' : 'FALSE'}
             ${w.isDelivery ? '' : 'AND a.status_tracker_id IS NOT NULL'}
             AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 6
@@ -117,10 +131,19 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
             JSON.stringify({
               account_id: o.account_id,
               order_code: o.account_name || `#${o.account_id}`,
+              customer_name: o.customer_name,
+              customer_phone: o.delivery_phone || null,
+              address: o.delivery_address || null,
+              driver_name: o.driver_name || null,
+              total_amount: Number(o.total_amount) || null,
+              status_name: o.status_name || null,
+              ordered_at: o.created_at,
               minutes: o.minutes,
               threshold,
               status_tracker_id: o.status_tracker_id,
-              _title: w.code === 'DELIVERY_DELAYED' ? 'Delivery retrasado' : 'Pedido retrasado',
+              _title: w.code === 'DELIVERY_DELAYED'
+                ? `Delivery retrasado: ${o.minutes} min (${o.customer_name})`
+                : `Pedido retrasado: ${o.minutes} min (${o.account_name || o.account_id})`,
             }),
             `${w.code}:account:${o.account_id}`,
           ],
@@ -171,6 +194,7 @@ async function processOutboxRow(row: OutboxRow): Promise<'sent' | 'skipped' | 'r
     business: names.business,
     location: names.location,
     payload: row.payload,
+    occurredAt: row.created_at,
   })
 
   const { to, cc, bcc } = splitRecipients(recipients)

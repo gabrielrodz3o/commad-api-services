@@ -66,10 +66,28 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
     params,
   )
 
+  // Descuentos aplicados hoy (líneas de orden con descuento, cuentas del ámbito)
+  const discScope = sub.location_id ? 'AND a.location_id = $1' : 'AND l.business_unit_id = $1'
+  const discParam = sub.location_id ?? sub.business_unit_id
+  const discounts = await query<any>(
+    `SELECT COUNT(*)::int AS lines, COALESCE(SUM(od.discount_amount), 0) AS amount
+       FROM restaurant.order_details od
+       JOIN restaurant.orders o ON o.id = od.order_id
+       JOIN restaurant.accounts a ON a.id = o.account_id
+       JOIN human_resource.locations l ON l.id = a.location_id
+      WHERE od.discount_amount > 0
+        AND a.created_at::date = (now() AT TIME ZONE '${TZ}')::date
+        ${discScope}`,
+    [discParam],
+  ).catch(() => [{ lines: 0, amount: 0 }])
+
   const totGross = sales.reduce((a, r) => a + Number(r.gross), 0)
   const totNc = sales.reduce((a, r) => a + Number(r.nc_amount), 0)
   const totInvoices = sales.reduce((a, r) => a + Number(r.invoices), 0)
   const net = totGross - totNc
+  const avgTicket = totInvoices ? totGross / totInvoices : 0
+  const discAmount = Number(discounts[0]?.amount) || 0
+  const discLines = Number(discounts[0]?.lines) || 0
 
   const place = names.location ? `${names.business} — ${names.location}` : `${names.business} (todas las sucursales)`
   const dateStr = new Date().toLocaleDateString('es-DO', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
@@ -79,6 +97,8 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
     ['Venta bruta', money(totGross)],
     ['Notas de crédito', totNc ? `-${money(totNc)}` : money(0)],
     ['Venta neta', `<span style="font-size:16px">${money(net)}</span>`],
+    ['Ticket promedio', money(avgTicket)],
+    ['Descuentos aplicados', discAmount ? `${money(discAmount)} (${discLines} línea${discLines === 1 ? '' : 's'})` : 'Ninguno'],
   ])
 
   if (!sub.location_id && sales.length > 1) {

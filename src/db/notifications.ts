@@ -28,6 +28,7 @@ export interface OutboxRow {
   location_id: number | null
   payload: any
   attempts: number
+  created_at: string
 }
 
 export interface SubscriptionRow {
@@ -93,7 +94,7 @@ export async function claimOutboxBatch(limit = 50): Promise<OutboxRow[]> {
            LIMIT $1
         )
         RETURNING o.id, o.event_type_id, o.business_unit_id, o.location_id,
-                  o.payload, o.attempts`,
+                  o.payload, o.attempts, o.created_at`,
       [limit],
     )
     await client.query('COMMIT')
