@@ -238,7 +238,7 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
         ['Dirección', esc(p.address || dash)],
         ['Motorista', esc(p.driver_name || 'Sin asignar')],
         ['Monto de la orden', money(p.total_amount)],
-        ['Ordenado', fmtDateTime(p.ordered_at)],
+        ['Ordenado', esc(p.ordered_at || dash)],
       ],
     }),
     ORDER_DELAYED: () => ({
@@ -253,7 +253,7 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
         ['Cliente', esc(p.customer_name || dash)],
         ['Teléfono', esc(p.customer_phone || dash)],
         ['Monto de la orden', money(p.total_amount)],
-        ['Ordenado', fmtDateTime(p.ordered_at)],
+        ['Ordenado', esc(p.ordered_at || dash)],
       ],
     }),
     NCF_RUNNING_OUT: () => ({

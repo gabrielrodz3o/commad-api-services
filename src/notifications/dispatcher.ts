@@ -271,7 +271,11 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
                 d.use_fullname AS driver_name,
                 (SELECT o3.code FROM restaurant.orders o3 WHERE o3.account_id = a.id ORDER BY o3.id LIMIT 1) AS order_code,
                 tot.total_amount,
-                FLOOR(EXTRACT(EPOCH FROM (now() - a.created_at)) / 60)::int AS minutes
+                to_char(a.created_at, 'DD/MM/YYYY HH12:MI AM') AS ordered_at_display,
+                -- created_at es 'timestamp without time zone' con HORA LOCAL RD y
+                -- la sesión corre en GMT: hay que restar contra la hora LOCAL,
+                -- no contra now() UTC (si no, la edad se infla 4h / 240 min).
+                FLOOR(EXTRACT(EPOCH FROM ((now() AT TIME ZONE '${TZ}') - a.created_at)) / 60)::int AS minutes
            FROM restaurant.accounts a
            JOIN human_resource.locations l ON l.id = a.location_id
            LEFT JOIN restaurant.account_service_status ass ON ass.id = a.status_tracker_id
@@ -286,8 +290,8 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
            ) tot ON TRUE
           WHERE ${w.where}
             AND a.state_id IN (1, 2)
-            AND (a.created_at AT TIME ZONE '${TZ}')::date = (now() AT TIME ZONE '${TZ}')::date
-            AND a.created_at <= now() - make_interval(mins => $1::int)
+            AND a.created_at::date = (now() AT TIME ZONE '${TZ}')::date
+            AND a.created_at <= (now() AT TIME ZONE '${TZ}') - make_interval(mins => $1::int)
             ${scopeSql}`,
         [threshold, scopeParam],
       )
@@ -319,7 +323,7 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
               driver_name: o.driver_name || null,
               total_amount: Number(o.total_amount) || null,
               status_name: o.status_name || null,
-              ordered_at: o.created_at,
+              ordered_at: o.ordered_at_display || null,
               minutes: o.minutes,
               threshold,
               status_tracker_id: o.status_tracker_id,
