@@ -82,7 +82,10 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
         ? Number(sub.threshold_value)
         : (sub as any).default_threshold_value != null ? Number((sub as any).default_threshold_value) : (w.isDelivery ? 45 : 30)
 
-      // Órdenes activas (tracker 1-6) vencidas, de las últimas 24h.
+      // Órdenes activas (tracker 1-6) vencidas, de las últimas 4 HORAS.
+      // La ventana corta evita dos males: (a) el backlog inicial al activar el
+      // watcher (cuentas zombis de días previos dispararon ~120 correos el
+      // 2026-07-28) y (b) alertar retrasos ya no accionables.
       // Ámbito: sucursal específica o todas las del BU (respetando overrides:
       // si otra suscripción específica cubre una sucursal, esa manda — el
       // dedupe_key garantiza una sola alerta por orden aunque coincidan).
@@ -112,7 +115,7 @@ async function runWatchers(): Promise<{ scanned: number; enqueued: number }> {
             ${w.isDelivery ? '' : 'AND a.status_tracker_id IS NOT NULL'}
             AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 6
             AND a.state_id IN (1, 2)
-            AND a.created_at >= now() - interval '24 hours'
+            AND a.created_at >= now() - interval '4 hours'
             AND a.created_at <= now() - make_interval(mins => $1::int)
             ${scopeSql.replace('$2', '$2')}`,
         [threshold, scopeParam],
