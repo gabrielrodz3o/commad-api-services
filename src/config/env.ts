@@ -45,6 +45,10 @@ const schema = z.object({
   // Vacío = motor de correos deshabilitado (las rutas responden 503).
   NOTIF_SMTP_ENC_KEY: z.string().default(''),
 
+  // Secreto del webhook de Resend (rebotes/quejas). Se pasa en la URL del
+  // webhook como ?token=... Vacío = el webhook rechaza todo (fail-closed).
+  NOTIF_WEBHOOK_SECRET: z.string().default(''),
+
   // CORS multi-tenant: además de CORS_ORIGINS (lista exacta), se permite cualquier
   // subdominio de estos sufijos (ej. pizzagetto.comandpos.com, cliente2.comandpos.com…).
   CORS_ORIGIN_SUFFIXES: z.string().default('.comandpos.com'),

@@ -18,6 +18,9 @@ export function registerAuth(app: FastifyInstance) {
   app.addHook('onRequest', async (req, reply) => {
     if (req.method === 'OPTIONS') return // preflight CORS
     if (req.url === '/health' || req.url === '/ready' || req.url === '/' || req.url.startsWith('/v1/mobile/')) return
+    // Webhook de Resend (rebotes/quejas): público — se autentica con su propio
+    // secreto en la query (?token=), no con el token de servicio del core.
+    if (req.url.startsWith('/comandi/notifications/resend-webhook')) return
 
     const header = req.headers['authorization'] || ''
     const token = header.startsWith('Bearer ')

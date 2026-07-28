@@ -11,7 +11,7 @@ import { z } from 'zod'
 import { env } from '../config/env.js'
 import { query } from '../db/pool.js'
 import { runNotificationsTick } from '../notifications/dispatcher.js'
-import { getSmtpConfigForCompany, type SmtpConfig } from '../db/notifications.js'
+import { getSmtpConfigForCompany, suppressEmail, type SmtpConfig } from '../db/notifications.js'
 import { verifyAndTest } from '../email/smtp.js'
 
 const OverrideSchema = z.object({
@@ -60,6 +60,7 @@ export function notificationRoutes(app: FastifyInstance) {
         from_name: override.from_name || null,
         reply_to: null,
         is_active: true,
+        daily_send_limit: 300,
       }
     } else {
       if (!env.NOTIF_SMTP_ENC_KEY) {
@@ -90,5 +91,34 @@ export function notificationRoutes(app: FastifyInstance) {
       const msg = String(e?.message || 'No se pudo conectar al servidor SMTP')
       return reply.code(422).send({ success: false, message: msg })
     }
+  })
+
+  // Webhook de Resend: rebotes duros y quejas de spam → suprimir el destinatario
+  // para proteger la reputación del remitente (dejar de enviarle = menos spam).
+  // Auth: secreto en la query (?token=NOTIF_WEBHOOK_SECRET). Fail-closed.
+  app.post('/comandi/notifications/resend-webhook', async (req, reply) => {
+    const token = (req.query as any)?.token || ''
+    if (!env.NOTIF_WEBHOOK_SECRET || token !== env.NOTIF_WEBHOOK_SECRET) {
+      return reply.code(401).send({ success: false, message: 'No autorizado' })
+    }
+    const body = req.body as any
+    const type: string = body?.type || ''
+    const data = body?.data || {}
+    // Solo rebotes duros y quejas desactivan al destinatario.
+    const suppress = type === 'email.bounced' || type === 'email.complained'
+    if (!suppress) return { success: true, ignored: type || 'sin tipo' }
+
+    const emails: string[] = Array.isArray(data.to) ? data.to
+      : (typeof data.to === 'string' ? [data.to] : (data.email ? [data.email] : []))
+    const reason = type === 'email.complained' ? 'complaint' : 'bounce'
+    let n = 0
+    for (const e of emails) {
+      if (typeof e === 'string' && e.includes('@')) {
+        await suppressEmail(e, reason, `resend:${type}`).catch(() => {})
+        n++
+      }
+    }
+    req.log.warn({ type, emails }, 'resend webhook: destinatarios suprimidos')
+    return { success: true, suppressed: n, reason }
   })
 }

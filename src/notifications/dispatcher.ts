@@ -14,10 +14,12 @@ import {
   claimOutboxBatch, resolveSubscription, getRecipients, markOutbox,
   scheduleRetryOrFail, getDueScheduled, getLocationNames,
   getSmtpConfigForBusinessUnit, logDelivery,
-  type OutboxRow, type SubscriptionRow, type Recipient,
+  countCompanyEmailsSentToday, capWarningSentToday,
+  getPendingGroups, deferOutbox, markOutboxMany,
+  type OutboxRow, type SubscriptionRow, type Recipient, type SmtpConfig,
 } from '../db/notifications.js'
 import { sendEmail } from '../email/smtp.js'
-import { renderEventEmail } from '../email/templates.js'
+import { renderEventEmail, renderDigestEmail, layout } from '../email/templates.js'
 import { buildDailyCloseReport } from '../email/reports/daily-close.js'
 import { buildCostChangesReport } from '../email/reports/cost-changes.js'
 import { buildArApReport } from '../email/reports/ar-ap.js'
@@ -53,6 +55,142 @@ function splitRecipients(recipients: Recipient[]): { to: string[]; cc: string[];
     cc: recipients.filter((r) => r.kind === 'cc').map((r) => r.email),
     bcc: recipients.filter((r) => r.kind === 'bcc').map((r) => r.email),
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HIGIENE ANTI-SPAM
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Hora y fecha local RD, para quiet hours y comparaciones de ventana. */
+async function getLocalNow(): Promise<{ time: string; ms: number }> {
+  const r = await query<{ t: string; ms: string }>(
+    `SELECT to_char(now() AT TIME ZONE '${TZ}', 'HH24:MI:SS') AS t,
+            (extract(epoch from now()) * 1000)::bigint AS ms`,
+  )
+  return { time: r[0]?.t || '00:00:00', ms: Number(r[0]?.ms) || Date.now() }
+}
+
+/** ¿La hora local cae dentro del horario silencioso? Soporta ventana nocturna. */
+function inQuietWindow(start: string | null, end: string | null, nowT: string): boolean {
+  if (!start || !end) return false
+  const s = start.slice(0, 8), e = end.slice(0, 8)
+  if (s === e) return false
+  return s < e ? (nowT >= s && nowT < e) : (nowT >= s || nowT < e)
+}
+
+/** Aviso único por día cuando una compañía alcanza su tope de correos. */
+async function maybeSendCapWarning(smtp: SmtpConfig, recipients: Recipient[], subscriptionId: string): Promise<void> {
+  try {
+    if (await capWarningSentToday(smtp.company_id)) return
+    if (!recipients.length) return
+    const subject = `⚠️ Límite diario de correos alcanzado (${smtp.daily_send_limit})`
+    const html = layout({
+      kind: 'alert',
+      title: 'Límite diario de correos alcanzado',
+      bodyHtml: `<div style="font-size:14px">Se alcanzó el tope de <strong>${smtp.daily_send_limit}</strong> correos de notificación para hoy.
+        Las notificaciones NO críticas restantes se suprimieron para proteger la reputación del remitente.
+        Las alertas críticas (NCF, seguridad) siguen enviándose. El conteo se reinicia mañana.</div>`,
+    })
+    const { to, cc, bcc } = splitRecipients(recipients)
+    const result = await sendEmail(smtp, { to: to.length ? to : [...cc, ...bcc], cc, bcc, subject, html })
+    await logDelivery({ subscription_id: subscriptionId, channel: 'email', recipient: (to[0] || cc[0] || bcc[0] || 'n/d'), subject, status: 'sent', smtp_message_id: result.messageId })
+  } catch (e: any) {
+    console.warn('⚠️ no se pudo enviar aviso de tope diario:', e?.message)
+  }
+}
+
+/**
+ * Envía un correo aplicando el circuit breaker (tope diario por compañía).
+ * Los eventos críticos ignoran el tope. Devuelve 'sent' o 'capped'.
+ * Lanza si el SMTP falla (el llamador decide retry).
+ */
+async function deliverEmail(opts: {
+  smtp: SmtpConfig
+  recipients: Recipient[]
+  subject: string
+  html: string
+  isCritical: boolean
+  subscriptionId: string
+  outboxId?: string | null
+}): Promise<'sent' | 'capped'> {
+  if (!opts.isCritical) {
+    const sentToday = await countCompanyEmailsSentToday(opts.smtp.company_id)
+    if (sentToday >= opts.smtp.daily_send_limit) {
+      await maybeSendCapWarning(opts.smtp, opts.recipients, opts.subscriptionId)
+      return 'capped'
+    }
+  }
+  const { to, cc, bcc } = splitRecipients(opts.recipients)
+  const result = await sendEmail(opts.smtp, { to: to.length ? to : [...cc, ...bcc], cc, bcc, subject: opts.subject, html: opts.html })
+  for (const r of opts.recipients) {
+    await logDelivery({
+      outbox_id: opts.outboxId || null, subscription_id: opts.subscriptionId, channel: 'email',
+      recipient: r.email, subject: opts.subject, status: 'sent', smtp_message_id: result.messageId,
+    })
+  }
+  return 'sent'
+}
+
+const MAX_DIGEST_BATCH = 50
+
+/**
+ * Pre-pass del outbox: aplica quiet hours y digest ANTES del claim normal.
+ *   - Grupos en horario silencioso (no críticos) → diferidos al fin de la ventana.
+ *   - Grupos con digest: si el más viejo aún no cumple la ventana → diferidos;
+ *     si maduró (o llegó a MAX_DIGEST_BATCH) → UN solo correo resumen.
+ * Los grupos inmediatos (sin digest ni quiet) se dejan intactos para processOutbox.
+ */
+async function prepareOutboxGroups(): Promise<{ digestSent: number; quietDeferred: number; digestDeferred: number; capped: number }> {
+  const out = { digestSent: 0, quietDeferred: 0, digestDeferred: 0, capped: 0 }
+  const groups = await getPendingGroups()
+  if (!groups.length) return out
+  const now = await getLocalNow()
+
+  for (const g of groups) {
+    const sub = await resolveSubscription(g)
+    if (!sub || !sub.is_enabled || !sub.channel_email) continue // processOutbox lo marcará skipped
+
+    // Quiet hours (no críticos): diferir todo el grupo al fin de la ventana
+    if (!sub.is_critical && inQuietWindow(sub.quiet_start, sub.quiet_end, now.time)) {
+      const expr = `((CASE WHEN (now() AT TIME ZONE '${TZ}')::time < $1::time
+                          THEN (now() AT TIME ZONE '${TZ}')::date
+                          ELSE (now() AT TIME ZONE '${TZ}')::date + 1 END + $1::time) AT TIME ZONE '${TZ}')`
+      await deferOutbox(g.ids, expr, [sub.quiet_end])
+      out.quietDeferred += g.n
+      continue
+    }
+
+    // Digest
+    const digestMin = Number(sub.digest_minutes) || 0
+    if (digestMin > 0) {
+      const ageMin = (now.ms - new Date(g.oldest).getTime()) / 60000
+      if (ageMin < digestMin && g.n < MAX_DIGEST_BATCH) {
+        // Aún no madura: diferir hasta oldest + ventana
+        await deferOutbox(g.ids, `$1::timestamptz + make_interval(mins => $2::int)`, [g.oldest, digestMin])
+        out.digestDeferred += g.n
+        continue
+      }
+      // Madura → un solo correo resumen
+      try {
+        const recipients = await getRecipients(sub.id)
+        if (!recipients.length) { await markOutboxMany(g.ids, 'skipped', 'Sin destinatarios'); continue }
+        const smtp = await getSmtpConfigForBusinessUnit(g.business_unit_id)
+        if (!smtp) { await markOutboxMany(g.ids, 'skipped', 'Compañía sin SMTP'); continue }
+        const names = await getLocationNames(g.business_unit_id, g.location_id)
+        const place = names.location ? `${names.business} — ${names.location}` : names.business
+        const items = (g.payloads || []).map((pl: any) => ({ title: pl?._title || sub.event_name || 'Notificación', at: null, body: pl?._body || null }))
+        const { subject, html } = renderDigestEmail({ eventName: sub.event_name || 'Notificaciones', place, items })
+        const res = await deliverEmail({ smtp, recipients, subject, html, isCritical: !!sub.is_critical, subscriptionId: sub.id })
+        if (res === 'sent') { await markOutboxMany(g.ids, 'sent'); out.digestSent += g.n }
+        else { await markOutboxMany(g.ids, 'skipped', 'Tope diario alcanzado'); out.capped += g.n }
+      } catch (e: any) {
+        // Fallo SMTP: reintentar el grupo en 5 min (sin perder eventos)
+        await deferOutbox(g.ids, `now() + interval '5 minutes'`, [])
+        console.warn('⚠️ digest falló, reprogramado:', e?.message)
+      }
+    }
+  }
+  return out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -388,6 +526,12 @@ async function processOutboxRow(row: OutboxRow): Promise<'sent' | 'skipped' | 'r
     return 'skipped'
   }
 
+  // Guardia de backlog: no notificar eventos anteriores a la activación de la suscripción.
+  if (sub.activated_at && new Date(row.created_at) < new Date(sub.activated_at)) {
+    await markOutbox(row.id, 'skipped', 'Evento anterior a la activación de la suscripción')
+    return 'skipped'
+  }
+
   // Umbral (si el tipo lo define y el payload trae el valor)
   if (row.has_threshold) {
     const threshold = await effectiveThreshold(sub, row.event_type_id)
@@ -400,7 +544,7 @@ async function processOutboxRow(row: OutboxRow): Promise<'sent' | 'skipped' | 'r
 
   const recipients = await getRecipients(sub.id)
   if (!recipients.length) {
-    await markOutbox(row.id, 'skipped', 'La suscripción no tiene destinatarios')
+    await markOutbox(row.id, 'skipped', 'La suscripción no tiene destinatarios (o todos suprimidos)')
     return 'skipped'
   }
 
@@ -420,14 +564,14 @@ async function processOutboxRow(row: OutboxRow): Promise<'sent' | 'skipped' | 'r
     occurredAt: row.created_at,
   })
 
-  const { to, cc, bcc } = splitRecipients(recipients)
   try {
-    const result = await sendEmail(smtp, { to: to.length ? to : [...cc, ...bcc], cc, bcc, subject, html })
-    for (const r of recipients) {
-      await logDelivery({
-        outbox_id: row.id, subscription_id: sub.id, channel: 'email',
-        recipient: r.email, subject, status: 'sent', smtp_message_id: result.messageId,
-      })
+    const res = await deliverEmail({
+      smtp, recipients, subject, html,
+      isCritical: !!sub.is_critical, subscriptionId: sub.id, outboxId: row.id,
+    })
+    if (res === 'capped') {
+      await markOutbox(row.id, 'skipped', 'Tope diario de correos alcanzado')
+      return 'skipped'
     }
     await markOutbox(row.id, 'sent')
     return 'sent'
@@ -510,15 +654,13 @@ async function runScheduled(): Promise<{ due: number; sent: number; empty: numbe
       const email = await buildScheduledEmail(sub, names)
       if (!email) { out.empty++; continue } // sin datos que reportar (ej. sin cambios de costo)
 
-      const { to, cc, bcc } = splitRecipients(recipients)
-      const result = await sendEmail(smtp, { to: to.length ? to : [...cc, ...bcc], cc, bcc, subject: email.subject, html: email.html })
-      for (const r of recipients) {
-        await logDelivery({
-          subscription_id: sub.id, channel: 'email', recipient: r.email,
-          subject: email.subject, status: 'sent', smtp_message_id: result.messageId,
-        })
-      }
-      out.sent++
+      // Los reportes programados también respetan el tope diario (salvo críticos).
+      const res = await deliverEmail({
+        smtp, recipients, subject: email.subject, html: email.html,
+        isCritical: !!sub.is_critical, subscriptionId: sub.id,
+      })
+      if (res === 'capped') out.empty++
+      else out.sent++
     } catch (e: any) {
       console.error('⚠️ reporte programado falló', sub.event_code, sub.id, e?.message)
       await logDelivery({
@@ -540,7 +682,9 @@ export async function runNotificationsTick() {
   }
   const watchers = await runWatchers().catch((e) => { console.error('⚠️ watchers:', e?.message); return { scanned: 0, enqueued: 0 } })
   const business = await runBusinessWatchers().catch((e) => { console.error('⚠️ business watchers:', e?.message); return { scanned: 0, enqueued: 0 } })
+  // Pre-pass anti-spam (quiet hours + digest) ANTES del envío individual.
+  const prepared = await prepareOutboxGroups().catch((e) => { console.error('⚠️ prepare (digest/quiet):', e?.message); return { digestSent: 0, quietDeferred: 0, digestDeferred: 0, capped: 0 } })
   const outbox = await processOutbox().catch((e) => { console.error('⚠️ outbox:', e?.message); return { processed: 0, sent: 0, skipped: 0, retried: 0, failed: 0 } })
   const scheduled = await runScheduled().catch((e) => { console.error('⚠️ scheduled:', e?.message); return { due: 0, sent: 0, empty: 0, failed: 0 } })
-  return { disabled: false, watchers, business, outbox, scheduled }
+  return { disabled: false, watchers, business, prepared, outbox, scheduled }
 }

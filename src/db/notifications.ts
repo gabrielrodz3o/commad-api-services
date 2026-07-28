@@ -15,6 +15,7 @@ export interface SmtpConfig {
   from_name: string | null
   reply_to: string | null
   is_active: boolean
+  daily_send_limit: number
 }
 
 export interface OutboxRow {
@@ -45,8 +46,13 @@ export interface SubscriptionRow {
   threshold_value: number | null
   is_enabled: boolean
   last_sent_at: string | null
+  digest_minutes: number | null
+  activated_at: string | null
+  quiet_start: string | null
+  quiet_end: string | null
   event_code?: string
   event_name?: string
+  is_critical?: boolean
 }
 
 export interface Recipient { email: string; display_name: string | null; kind: 'to' | 'cc' | 'bcc' }
@@ -57,7 +63,8 @@ export async function getSmtpConfigForCompany(companyId: number): Promise<SmtpCo
   const rows = await query<SmtpConfig>(
     `SELECT company_id, smtp_host, smtp_port, smtp_secure, smtp_user,
             notifications.pgp_sym_decrypt(smtp_password_enc, $2) AS smtp_password,
-            from_email, from_name, reply_to, is_active
+            from_email, from_name, reply_to, is_active,
+            COALESCE(daily_send_limit, 300) AS daily_send_limit
        FROM notifications.company_smtp_config
       WHERE company_id = $1 AND deleted_at IS NULL AND is_active`,
     [companyId, env.NOTIF_SMTP_ENC_KEY],
@@ -124,21 +131,117 @@ export async function claimOutboxBatch(limit = 50): Promise<OutboxRow[]> {
 /** Suscripción aplicable a un evento del outbox (cascada: sucursal gana a general). */
 export async function resolveSubscription(row: { business_unit_id: number; location_id: number | null; event_type_id: string }): Promise<SubscriptionRow | null> {
   const rows = await query<SubscriptionRow>(
-    `SELECT * FROM notifications.subscriptions
-      WHERE business_unit_id = $1 AND event_type_id = $2
-        AND (location_id = $3 OR location_id IS NULL)
-      ORDER BY location_id NULLS LAST
+    `SELECT s.*, et.is_critical, et.code AS event_code, et.name AS event_name
+       FROM notifications.subscriptions s
+       JOIN notifications.event_types et ON et.id = s.event_type_id
+      WHERE s.business_unit_id = $1 AND s.event_type_id = $2
+        AND (s.location_id = $3 OR s.location_id IS NULL)
+      ORDER BY s.location_id NULLS LAST
       LIMIT 1`,
     [row.business_unit_id, row.event_type_id, row.location_id],
   )
   return rows[0] || null
 }
 
+/** Destinatarios activos, excluyendo los de la lista de supresión (rebotes/quejas). */
 export async function getRecipients(subscriptionId: string): Promise<Recipient[]> {
   return query<Recipient>(
-    `SELECT email, display_name, kind FROM notifications.recipients
-      WHERE subscription_id = $1 AND is_active ORDER BY created_at`,
+    `SELECT r.email, r.display_name, r.kind
+       FROM notifications.recipients r
+      WHERE r.subscription_id = $1 AND r.is_active
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications.suppressed_emails se
+           WHERE lower(se.email) = lower(r.email))
+      ORDER BY r.created_at`,
     [subscriptionId],
+  )
+}
+
+/** Correos enviados HOY (fecha local RD) por la compañía — para el circuit breaker. */
+export async function countCompanyEmailsSentToday(companyId: number): Promise<number> {
+  const rows = await query<{ n: string }>(
+    `SELECT count(*)::int AS n
+       FROM notifications.deliveries d
+       JOIN notifications.subscriptions s ON s.id = d.subscription_id
+       JOIN human_resource.business_units bu ON bu.id = s.business_unit_id
+      WHERE bu.company_id = $1 AND d.channel = 'email' AND d.status = 'sent'
+        AND (d.sent_at AT TIME ZONE 'America/Santo_Domingo')::date
+            = (now() AT TIME ZONE 'America/Santo_Domingo')::date`,
+    [companyId],
+  )
+  return Number(rows[0]?.n) || 0
+}
+
+/** ¿Ya se avisó hoy a esta compañía que se alcanzó el tope diario? */
+export async function capWarningSentToday(companyId: number): Promise<boolean> {
+  const rows = await query<{ n: string }>(
+    `SELECT count(*)::int AS n
+       FROM notifications.deliveries d
+       JOIN notifications.subscriptions s ON s.id = d.subscription_id
+       JOIN human_resource.business_units bu ON bu.id = s.business_unit_id
+      WHERE bu.company_id = $1 AND d.subject LIKE '%Límite diario de correos%'
+        AND (d.sent_at AT TIME ZONE 'America/Santo_Domingo')::date
+            = (now() AT TIME ZONE 'America/Santo_Domingo')::date`,
+    [companyId],
+  )
+  return (Number(rows[0]?.n) || 0) > 0
+}
+
+/** Agrega un correo a la lista de supresión y desactiva sus filas de destinatario. */
+export async function suppressEmail(email: string, reason: string, detail?: string): Promise<void> {
+  const e = email.trim().toLowerCase()
+  if (!e) return
+  await query(
+    `INSERT INTO notifications.suppressed_emails (email, reason, detail)
+     VALUES ($1, $2, $3) ON CONFLICT (email) DO NOTHING`,
+    [e, reason.slice(0, 30), detail || null],
+  )
+  await query(
+    `UPDATE notifications.recipients SET is_active = false WHERE lower(email) = $1`,
+    [e],
+  )
+}
+
+/** Grupos de outbox pendiente (para digest y quiet hours), agrupados por ámbito. */
+export interface OutboxGroup {
+  event_type_id: string
+  business_unit_id: number
+  location_id: number | null
+  ids: string[]
+  payloads: any[]
+  oldest: string
+  n: number
+}
+export async function getPendingGroups(): Promise<OutboxGroup[]> {
+  return query<OutboxGroup>(
+    `SELECT event_type_id, business_unit_id, location_id,
+            array_agg(id ORDER BY created_at) AS ids,
+            json_agg(payload ORDER BY created_at) AS payloads,
+            min(created_at) AS oldest,
+            count(*)::int AS n
+       FROM notifications.outbox
+      WHERE status = 'pending' AND next_attempt_at <= now()
+      GROUP BY event_type_id, business_unit_id, location_id`,
+  )
+}
+
+/** Difiere filas del outbox (digest inmaduro / quiet hours). No cuenta como intento. */
+export async function deferOutbox(ids: string[], nextAttemptAtSql: string, params: any[]): Promise<void> {
+  if (!ids.length) return
+  await query(
+    `UPDATE notifications.outbox SET next_attempt_at = ${nextAttemptAtSql}
+      WHERE id = ANY($${params.length + 1}::uuid[]) AND status = 'pending'`,
+    [...params, ids],
+  )
+}
+
+/** Marca varias filas del outbox con el mismo estado. */
+export async function markOutboxMany(ids: string[], status: 'sent' | 'skipped' | 'failed', error?: string): Promise<void> {
+  if (!ids.length) return
+  await query(
+    `UPDATE notifications.outbox SET status = $2, error_message = $3, processed_at = now()
+      WHERE id = ANY($1::uuid[])`,
+    [ids, status, error || null],
   )
 }
 
@@ -177,7 +280,7 @@ export async function getDueScheduled(): Promise<SubscriptionRow[]> {
     `WITH local_now AS (
        SELECT now() AT TIME ZONE 'America/Santo_Domingo' AS ts
      )
-     SELECT s.*, et.code AS event_code, et.name AS event_name
+     SELECT s.*, et.code AS event_code, et.name AS event_name, et.is_critical
        FROM notifications.subscriptions s
        JOIN notifications.event_types et ON et.id = s.event_type_id AND et.delivery_mode = 'scheduled'
        CROSS JOIN local_now n

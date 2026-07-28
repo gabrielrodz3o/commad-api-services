@@ -360,3 +360,30 @@ function currenciesTable(currencies: any): string {
 }
 
 function dashSafe(v: any): string { return v == null || v === '' ? '—' : String(v) }
+
+/**
+ * Correo digest: agrupa N eventos del mismo tipo en un solo mensaje (anti-spam).
+ * Lista cada evento con su título y hora, para eventos ruidosos (ítems borrados,
+ * descuentos, retrasos) que de otro modo mandarían un correo por cada uno.
+ */
+export function renderDigestEmail(opts: {
+  eventName: string
+  place: string
+  items: Array<{ title: string; at?: string | null; body?: string | null }>
+}): { subject: string; html: string } {
+  const n = opts.items.length
+  const rows = opts.items.map((it, i) => [
+    String(i + 1),
+    esc(it.title || opts.eventName),
+    it.at ? fmtDateTime(it.at) : dash,
+  ])
+  const body =
+    `<div style="font-size:14px;margin-bottom:6px">Se agruparon <strong>${n}</strong> notificaciones de «${esc(opts.eventName)}» para no saturar tu bandeja:</div>` +
+    dataTable(['#', 'Detalle', 'Cuándo'], rows, ['right', 'left', 'left'])
+  return {
+    subject: `[${opts.place}] ${opts.eventName}: ${n} notificaciones agrupadas`,
+    html: layout({ kind: 'info', title: `${opts.eventName} — resumen`, subtitle: opts.place, bodyHtml: body }),
+  }
+}
+
+const dash = '—'
