@@ -60,7 +60,7 @@ export async function buildCostChangesReport(
         `SELECT it.name AS item_name,
                 spl.changed_at,
                 spl.old_price, spl.new_price,
-                cat.description AS catalogue_name,
+                cat.name AS catalogue_name,
                 COALESCE(u.use_fullname, 'SISTEMA') AS changed_by
            FROM inventory.sale_price_change_log spl
            JOIN inventory.items it ON it.id = spl.item_id
