@@ -16,10 +16,16 @@ export function money(v: any): string {
 const ACCENT: Record<string, string> = {
   alert: '#d9480f',   // alertas operativas (anulación, borrado, diferencia)
   info: '#1971c2',    // informativos (cierre de caja, conteo)
-  report: '#2f9e44',  // reportes programados
+  report: '#0b7285',  // reportes programados (teal ejecutivo)
 }
+const KIND_META: Record<string, { icon: string; label: string }> = {
+  alert: { icon: '⚠', label: 'Alerta' },
+  info: { icon: 'ℹ', label: 'Notificación' },
+  report: { icon: '▣', label: 'Reporte' },
+}
+const FONT = `-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif`
 
-/** Layout base responsive (una sola columna, safe para clientes de correo). */
+/** Layout base premium (una sola columna, email-safe con tablas + inline styles). */
 export function layout(opts: {
   kind?: 'alert' | 'info' | 'report'
   title: string
@@ -28,30 +34,48 @@ export function layout(opts: {
   footerNote?: string | null
   cta?: { url: string; label: string } | null
 }): string {
-  const accent = ACCENT[opts.kind || 'info']
+  const kind = opts.kind || 'info'
+  const accent = ACCENT[kind]
+  const meta = KIND_META[kind]
+  const nowStr = new Date().toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' })
+  const preheader = `${opts.title}${opts.subtitle ? ' · ' + opts.subtitle : ''}`
   const ctaHtml = opts.cta
-    ? `<div style="margin-top:20px">
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:22px"><tr><td style="border-radius:8px;background:${accent}">
          <a href="${opts.cta.url}" target="_blank"
-            style="display:inline-block;background:${accent};color:#ffffff;text-decoration:none;
-                   font-size:14px;font-weight:bold;padding:11px 22px;border-radius:8px">
-           ${esc(opts.cta.label)} →
-         </a>
-       </div>`
+            style="display:inline-block;color:#ffffff;text-decoration:none;font-family:${FONT};font-size:14px;font-weight:700;padding:12px 24px">
+           ${esc(opts.cta.label)} &rarr;</a>
+       </td></tr></table>`
     : ''
   return `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#212529">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:24px 12px">
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"></head>
+<body style="margin:0;padding:0;background:#eef1f4;font-family:${FONT};color:#1f2937">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f4;padding:28px 12px">
     <tr><td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e9ecef">
-        <tr><td style="background:${accent};padding:18px 24px">
-          <div style="color:#ffffff;font-size:18px;font-weight:bold">${esc(opts.title)}</div>
-          ${opts.subtitle ? `<div style="color:rgba(255,255,255,.85);font-size:13px;margin-top:4px">${esc(opts.subtitle)}</div>` : ''}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e7ec">
+        <!-- barra de acento -->
+        <tr><td style="height:4px;background:${accent};font-size:0;line-height:0">&nbsp;</td></tr>
+        <!-- header -->
+        <tr><td style="padding:22px 28px 6px">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
+            <td valign="middle" style="width:44px">
+              <table role="presentation" cellpadding="0" cellspacing="0"><tr><td align="center" valign="middle"
+                style="width:38px;height:38px;background:${accent}1a;border-radius:9px;color:${accent};font-size:18px;font-weight:700">${meta.icon}</td></tr></table>
+            </td>
+            <td valign="middle" style="padding-left:12px">
+              <div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#9aa4b2">ComandPOS · ${meta.label}</div>
+              <div style="font-size:20px;font-weight:800;color:#111827;line-height:1.2;margin-top:2px">${esc(opts.title)}</div>
+            </td>
+          </tr></table>
+          ${opts.subtitle ? `<div style="font-size:13px;color:#6b7280;margin-top:8px">${esc(opts.subtitle)}</div>` : ''}
         </td></tr>
-        <tr><td style="padding:24px">${opts.bodyHtml}${ctaHtml}</td></tr>
-        <tr><td style="padding:14px 24px;background:#f8f9fa;border-top:1px solid #e9ecef">
-          <div style="color:#868e96;font-size:11px">
-            ${esc(opts.footerNote || 'Notificación automática de ComandPOS — configurable en Ajustes → Notificaciones.')}
+        <!-- body -->
+        <tr><td style="padding:18px 28px 26px">${opts.bodyHtml}${ctaHtml}</td></tr>
+        <!-- footer -->
+        <tr><td style="padding:16px 28px;background:#f7f9fb;border-top:1px solid #eceff3">
+          <div style="color:#9aa4b2;font-size:11px;line-height:1.5">
+            ${esc(opts.footerNote || 'Notificación automática de ComandPOS.')}<br>
+            Generado el ${esc(nowStr)} · Configurable en Ajustes &rarr; Notificaciones.
           </div>
         </td></tr>
       </table>
@@ -80,27 +104,35 @@ export function buildPosCta(eventCode: string, payload: any, baseUrl?: string | 
   }
 }
 
-/** Tabla clave→valor para los correos de alerta. */
+/** Tarjeta clave→valor para los correos de alerta (con divisores hairline). */
 export function kvTable(rows: Array<[string, string]>): string {
-  const tr = rows
-    .filter(([, v]) => v !== '' && v !== 'null' && v !== 'undefined')
-    .map(([k, v]) => `<tr>
-      <td style="padding:6px 12px 6px 0;color:#868e96;font-size:13px;white-space:nowrap;vertical-align:top">${esc(k)}</td>
-      <td style="padding:6px 0;font-size:13px"><strong>${v}</strong></td>
-    </tr>`)
-    .join('')
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%">${tr}</table>`
+  const clean = rows.filter(([, v]) => v !== '' && v !== 'null' && v !== 'undefined' && v != null)
+  const tr = clean.map(([k, v], i) => `<tr>
+      <td style="padding:9px 14px 9px 0;color:#8a94a6;font-size:12px;white-space:nowrap;vertical-align:top;${i < clean.length - 1 ? 'border-bottom:1px solid #f0f2f5' : ''}">${esc(k)}</td>
+      <td style="padding:9px 0;font-size:13px;color:#1f2937;vertical-align:top;${i < clean.length - 1 ? 'border-bottom:1px solid #f0f2f5' : ''}"><strong>${v}</strong></td>
+    </tr>`).join('')
+  return `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+     style="background:#fbfcfe;border:1px solid #eef1f5;border-radius:10px;padding:4px 16px">${tr}</table>`
 }
 
 /** Tabla de datos (reportes). headers + filas ya escapadas por el llamador con esc(). */
 export function dataTable(headers: string[], rows: string[][], align: Array<'left' | 'right'> = []): string {
   const th = headers.map((h, i) =>
-    `<th style="padding:8px;background:#f1f3f5;font-size:12px;color:#495057;text-align:${align[i] || 'left'};border-bottom:2px solid #dee2e6">${esc(h)}</th>`).join('')
-  const trs = rows.map((r) =>
-    `<tr>${r.map((c, i) =>
-      `<td style="padding:7px 8px;font-size:12px;border-bottom:1px solid #f1f3f5;text-align:${align[i] || 'left'}">${c}</td>`).join('')}</tr>`).join('')
-  return `<div style="overflow-x:auto"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">
+    `<th style="padding:9px 10px;background:#f2f5f8;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.3px;text-align:${align[i] || 'left'};border-bottom:1px solid #e3e7ec">${esc(h)}</th>`).join('')
+  const trs = rows.map((r, ri) =>
+    `<tr style="background:${ri % 2 ? '#fbfcfe' : '#ffffff'}">${r.map((c, i) =>
+      `<td style="padding:9px 10px;font-size:12px;color:#374151;border-bottom:1px solid #f0f2f5;text-align:${align[i] || 'left'}">${c}</td>`).join('')}</tr>`).join('')
+  return `<div style="overflow-x:auto;border:1px solid #eef1f5;border-radius:10px;margin-top:4px">
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">
     <thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>`
+}
+
+/** Banner de estado para alertas: pastilla de color + mensaje corto de contexto. */
+export function statusBanner(kind: 'alert' | 'info' | 'report', text: string): string {
+  const accent = ACCENT[kind]
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px">
+    <tr><td style="background:${accent}0f;border-left:4px solid ${accent};border-radius:8px;padding:12px 16px;font-size:13px;color:#374151">${text}</td></tr>
+  </table>`
 }
 
 /**
@@ -410,20 +442,23 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
     ['Fecha del evento', fmtDateTime(ctx.occurredAt)],
   ]
 
+  // Banner de estado con el resumen (una línea de contexto), arriba del detalle.
+  const banner = p._body ? statusBanner(resolved.kind, esc(p._body)) : ''
+
   return {
     subject: `[${place}] ${title}`,
     html: layout({
       kind: resolved.kind,
       title,
       subtitle: place,
-      bodyHtml: kvTable(rows) + (resolved.extra || '') + (p._body ? `<div style="margin-top:14px;font-size:13px;color:#495057">${esc(p._body)}</div>` : ''),
+      bodyHtml: banner + kvTable(rows) + (resolved.extra || ''),
       cta: buildPosCta(ctx.eventCode, p, ctx.posBaseUrl),
     }),
   }
 }
 
 function sectionTitle(text: string): string {
-  return `<div style="margin-top:16px;margin-bottom:4px;font-size:13px;font-weight:bold;color:#495057">${esc(text)}</div>`
+  return sectionHead(text)
 }
 
 /** Desglose por moneda de un cierre de caja. */
@@ -460,7 +495,7 @@ export function renderDigestEmail(opts: {
     it.at ? fmtDateTime(it.at) : dash,
   ])
   const body =
-    `<div style="font-size:14px;margin-bottom:6px">Se agruparon <strong>${n}</strong> notificaciones de «${esc(opts.eventName)}» para no saturar tu bandeja:</div>` +
+    heroStat({ label: opts.eventName, value: `${n} <span style="font-size:15px;font-weight:600;color:#6b7280">notificación${n === 1 ? '' : 'es'}</span>`, context: 'Agrupadas para no saturar tu bandeja', accent: '#0b7285' }) +
     dataTable(['#', 'Detalle', 'Cuándo'], rows, ['right', 'left', 'left'])
   return {
     subject: `[${opts.place}] ${opts.eventName}: ${n} notificaciones agrupadas`,

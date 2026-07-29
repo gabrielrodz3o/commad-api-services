@@ -8,7 +8,7 @@
 // (daily = 1 día, weekly = 7, monthly = 31).
 import { query } from '../../db/pool.js'
 import type { SubscriptionRow } from '../../db/notifications.js'
-import { layout, dataTable, money, esc } from '../templates.js'
+import { layout, dataTable, money, esc, heroStat, sectionHead } from '../templates.js'
 
 const TZ = 'America/Santo_Domingo'
 
@@ -78,16 +78,23 @@ export async function buildCostChangesReport(
 
   const fmtDate = (v: any) => new Date(v).toLocaleString('es-DO', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
   const title = mode === 'increases' ? 'Costos aumentados' : 'Cambios de costo y precios'
-  let body = ''
+  const periodLabel = days === 1 ? 'últimas 24 horas' : `últimos ${days} días`
+
+  let body = heroStat({
+    label: mode === 'increases' ? 'Productos con aumento de costo' : 'Cambios registrados',
+    value: String(filteredCosts.length + priceChanges.length),
+    context: `${periodLabel} · ${filteredCosts.length} de costo · ${priceChanges.length} de precio`,
+    accent: '#0b7285',
+  })
 
   if (filteredCosts.length) {
-    body += `<div style="font-size:13px;font-weight:bold;color:#495057">Cambios de costo (${filteredCosts.length})</div>` +
+    body += sectionHead(`Cambios de costo (${filteredCosts.length})`) +
       dataTable(
         ['Producto', 'Fecha', 'Anterior', 'Nuevo', '%', 'Origen'],
         filteredCosts.map((c) => [
           esc(c.item_name), fmtDate(c.changed_at), money(c.old_cost), money(c.new_cost),
           c.percent_change === null ? '—'
-            : `<span style="color:${Number(c.percent_change) > 0 ? '#d9480f' : '#2f9e44'}">${Number(c.percent_change) > 0 ? '+' : ''}${esc(c.percent_change)}%</span>`,
+            : `<span style="color:${Number(c.percent_change) > 0 ? '#d9480f' : '#2f9e44'};font-weight:600">${Number(c.percent_change) > 0 ? '+' : ''}${esc(c.percent_change)}%</span>`,
           esc(c.supplier_name || c.changed_by),
         ]),
         ['left', 'left', 'right', 'right', 'right', 'left'],
@@ -95,7 +102,7 @@ export async function buildCostChangesReport(
   }
 
   if (priceChanges.length) {
-    body += `<div style="margin-top:18px;font-size:13px;font-weight:bold;color:#495057">Cambios de precio de venta (${priceChanges.length})</div>` +
+    body += sectionHead(`Cambios de precio de venta (${priceChanges.length})`) +
       dataTable(
         ['Producto', 'Fecha', 'Anterior', 'Nuevo', 'Catálogo', 'Usuario'],
         priceChanges.map((c) => [
@@ -106,7 +113,6 @@ export async function buildCostChangesReport(
       )
   }
 
-  const periodLabel = days === 1 ? 'últimas 24 horas' : `últimos ${days} días`
   return {
     subject: `[${names.business}] ${title} — ${periodLabel}`,
     html: layout({ kind: 'report', title, subtitle: `${names.business} · ${periodLabel}`, bodyHtml: body }),

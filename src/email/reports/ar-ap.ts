@@ -6,7 +6,7 @@
 //   - aging por expire_at (VIGENTE / VENCIDA ≤30d / MOROSA >30d)
 import { query } from '../../db/pool.js'
 import type { SubscriptionRow } from '../../db/notifications.js'
-import { layout, dataTable, kvTable, money, esc } from '../templates.js'
+import { layout, dataTable, money, esc, heroStat, statTiles, sectionHead } from '../templates.js'
 
 interface PendingRow {
   entity_name: string
@@ -63,28 +63,34 @@ function section(title: string, rows: PendingRow[]): string {
   for (const r of rows) byState.set(r.estado, (byState.get(r.estado) || 0) + Number(r.pending_dop))
 
   const estadoColor: Record<string, string> = { VIGENTE: '#2f9e44', VENCIDA: '#e8590c', MOROSA: '#c92a2a', 'SIN VENCIMIENTO': '#868e96' }
-  let html = `<div style="font-size:14px;font-weight:bold;color:#343a40;margin-top:8px">${esc(title)}</div>` +
-    kvTable([
-      ['Documentos pendientes', String(rows.length)],
-      ['Saldo total', `<span style="font-size:15px">${money(total)}</span>`],
-      ...[...byState.entries()].map(([estado, amt]) =>
-        [estado, `<span style="color:${estadoColor[estado] || '#495057'}">${money(amt)}</span>`] as [string, string]),
-    ])
+  const moroso = byState.get('MOROSA') || 0
+  let html = sectionHead(title) +
+    heroStat({
+      label: 'Saldo pendiente total',
+      value: money(total),
+      context: `${rows.length} documento${rows.length === 1 ? '' : 's'}${moroso ? ` · <span style="color:#c92a2a">${money(moroso)} en mora</span>` : ''}`,
+      accent: moroso ? '#c92a2a' : '#0b7285',
+    })
+
+  if (byState.size) {
+    html += statTiles([...byState.entries()].map(([estado, amt]) =>
+      ({ label: estado, value: money(amt), color: estadoColor[estado] || '#111827' })))
+  }
 
   if (rows.length) {
-    html += `<div style="margin-top:10px;font-size:12px;font-weight:bold;color:#495057">Mayores saldos</div>` +
+    html += sectionHead('Mayores saldos') +
       dataTable(
         ['Entidad', 'Factura', 'Vence', 'Estado', 'Pendiente'],
         rows.slice(0, 15).map((r) => [
           esc(r.entity_name), esc(r.invoice_number),
           r.expire_at ? new Date(r.expire_at).toLocaleDateString('es-DO') : '—',
-          `<span style="color:${estadoColor[r.estado] || '#495057'}">${esc(r.estado)}</span>`,
-          money(r.pending_dop),
+          `<span style="color:${estadoColor[r.estado] || '#495057'};font-weight:600">${esc(r.estado)}</span>`,
+          `<strong>${money(r.pending_dop)}</strong>`,
         ]),
         ['left', 'left', 'left', 'left', 'right'],
       )
   } else {
-    html += `<div style="margin-top:6px;font-size:12px;color:#868e96">Sin documentos pendientes. ✔</div>`
+    html += `<div style="margin-top:8px;font-size:12px;color:#2f9e44">Sin documentos pendientes. ✔</div>`
   }
   return html
 }

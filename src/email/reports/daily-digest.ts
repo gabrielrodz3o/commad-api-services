@@ -5,7 +5,7 @@
 // Todo en hora local RD; scope por sucursal (general = todas las del BU).
 import { query } from '../../db/pool.js'
 import type { SubscriptionRow } from '../../db/notifications.js'
-import { layout, dataTable, money } from '../templates.js'
+import { layout, dataTable, money, heroStat, statTiles, sectionHead } from '../templates.js'
 
 const TZ = 'America/Santo_Domingo'
 
@@ -99,8 +99,17 @@ export async function buildDailyDigest(sub: SubscriptionRow, names: { business: 
   const dateStr = new Date(`${targetIso}T12:00:00Z`).toLocaleDateString('es-DO', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
   const body = totalEventos === 0
-    ? `<div style="font-size:14px;color:#2f9e44">✔ Día sin incidencias de control registradas.</div>`
-    : `<div style="font-size:13px;margin-bottom:8px">Resumen de control del día (${totalEventos} evento${totalEventos === 1 ? '' : 's'}):</div>` +
+    ? heroStat({ label: 'Eventos de control del día', value: '0', context: '✔ Día sin incidencias registradas', accent: '#2f9e44' })
+    : heroStat({ label: 'Eventos de control del día', value: String(totalEventos), context: 'Anulaciones, descuentos, cortesías, borrados, mermas y cierres', accent: '#0b7285' }) +
+      statTiles([
+        { label: '🧾 Anulaciones', value: `${anul.n} · ${money(anul.total)}`, color: Number(anul.n) ? '#c92a2a' : '#111827' },
+        { label: '🏷️ Descuentos', value: `${desc.n} · ${money(desc.total)}`, color: Number(desc.n) ? '#d9480f' : '#111827' },
+        { label: '🎁 Cortesías', value: `${cort.n} · ${money(cort.total)}` },
+        { label: '🗑️ Artículos borrados', value: `${del.n} · ${money(del.total)}`, color: Number(del.n) ? '#d9480f' : '#111827' },
+        { label: '♻️ Mermas', value: `${waste.n} · ${money(waste.total)}`, color: Number(waste.n) ? '#c92a2a' : '#111827' },
+        { label: '💰 Cierres de caja', value: `${boxes.n}${boxes.total ? ' · ' + money(boxes.total) + ' dif.' : ''}` },
+      ]) +
+      sectionHead('Detalle') +
       dataTable(['Concepto', 'Cantidad', 'Monto'], rows, ['left', 'right', 'right'])
 
   return {
