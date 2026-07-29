@@ -37,7 +37,7 @@ export function layout(opts: {
   const kind = opts.kind || 'info'
   const accent = ACCENT[kind]
   const meta = KIND_META[kind]
-  const nowStr = new Date().toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' })
+  const nowStr = new Date().toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
   const preheader = `${opts.title}${opts.subtitle ? ' · ' + opts.subtitle : ''}`
   const ctaHtml = opts.cta
     ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:22px"><tr><td style="border-radius:8px;background:${accent}">

@@ -76,7 +76,7 @@ export async function buildCostChangesReport(
 
   if (!filteredCosts.length && !priceChanges.length) return null // nada que reportar → no enviar
 
-  const fmtDate = (v: any) => new Date(v).toLocaleString('es-DO', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  const fmtDate = (v: any) => new Date(v).toLocaleString('es-DO', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true })
   const title = mode === 'increases' ? 'Costos aumentados' : 'Cambios de costo y precios'
   const periodLabel = days === 1 ? 'últimas 24 horas' : `últimos ${days} días`
 
