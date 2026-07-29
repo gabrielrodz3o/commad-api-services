@@ -212,18 +212,16 @@ const WATCHERS: WatcherDef[] = [
             AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 4`,
     defaultThreshold: 45,
   },
-  // Pedido retrasado = prep del restaurante. Dine-in/pickup (1-4) y órdenes de
-  // PLATAFORMA (Uber/PedidosYa) SOLO en prep (1-3): una vez "Lista", el
-  // repartidor de la plataforma la busca, así que ya no es retraso del local.
+  // Pedido retrasado = prep tardía cuando ALGUIEN ESPERA: pickup (cliente va a
+  // recoger) o plataforma (Uber/PedidosYa, el repartidor espera). SOLO en prep
+  // (estados 1-3, Nueva→Preparando); una vez "Lista" (4) el restaurante ya hizo
+  // su parte. Las mesas DINE-IN se excluyen: una mesa abierta 30 min es normal
+  // (el cliente está comiendo), no un pedido retrasado.
   {
     code: 'ORDER_DELAYED',
-    where: `(
-              (a.is_delivery = FALSE AND a.status_tracker_id IS NOT NULL
-                 AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 4)
-              OR
-              (a.external_plattform_id IS NOT NULL
-                 AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 3)
-            )`,
+    where: `(a.external_plattform_id IS NOT NULL OR a.is_pickup = TRUE)
+            AND a.status_tracker_id IS NOT NULL
+            AND COALESCE(a.status_tracker_id, 1) BETWEEN 1 AND 3`,
     defaultThreshold: 30,
   },
 ]
