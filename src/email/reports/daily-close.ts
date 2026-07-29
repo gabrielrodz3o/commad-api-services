@@ -59,8 +59,8 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
   const boxes = await query<any>(
     `SELECT bx.name AS box_name, l.description_long AS location_name,
             be.shift_code,
-            to_char(be.open_at AT TIME ZONE '${TZ}', 'HH12:MI AM') AS open_hm,
-            to_char(be.close_at AT TIME ZONE '${TZ}', 'HH12:MI AM') AS close_hm,
+            to_char(be.open_at, 'HH12:MI AM') AS open_hm,
+            to_char(be.close_at, 'HH12:MI AM') AS close_hm,
             u.use_fullname AS closed_by, be.close_at,
             COALESCE(SUM(bec.amount_closed) FILTER (WHERE bec.is_closed), 0) AS total_closed,
             COALESCE(SUM(bec.difference) FILTER (WHERE bec.is_closed), 0) AS difference
