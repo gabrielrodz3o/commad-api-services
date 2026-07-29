@@ -23,6 +23,7 @@ import { renderEventEmail, renderDigestEmail, layout } from '../email/templates.
 import { buildDailyCloseReport } from '../email/reports/daily-close.js'
 import { buildCostChangesReport } from '../email/reports/cost-changes.js'
 import { buildArApReport } from '../email/reports/ar-ap.js'
+import { buildDailyDigest } from '../email/reports/daily-digest.js'
 
 const TZ = 'America/Santo_Domingo'
 
@@ -661,6 +662,8 @@ async function buildScheduledEmail(sub: SubscriptionRow, names: { business: stri
       return buildCostChangesReport(sub, names, 'all')
     case 'AR_AP_WEEKLY_REPORT':
       return buildArApReport(sub, names)
+    case 'DAILY_DIGEST':
+      return buildDailyDigest(sub, names)
     default:
       return null
   }
