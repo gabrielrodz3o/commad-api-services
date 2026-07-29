@@ -35,6 +35,8 @@ export function transporterFor(config: SmtpConfig): Transporter {
 
 export interface SendResult { messageId: string | null }
 
+export interface MailAttachment { filename: string; content: Buffer; contentType?: string }
+
 /** Envía un correo con la config de la compañía. Lanza si el SMTP rechaza. */
 export async function sendEmail(config: SmtpConfig, opts: {
   to: string[]
@@ -42,6 +44,7 @@ export async function sendEmail(config: SmtpConfig, opts: {
   bcc?: string[]
   subject: string
   html: string
+  attachments?: MailAttachment[]
 }): Promise<SendResult> {
   const transporter = transporterFor(config)
   const info = await transporter.sendMail({
@@ -52,6 +55,9 @@ export async function sendEmail(config: SmtpConfig, opts: {
     bcc: opts.bcc?.length ? opts.bcc : undefined,
     subject: opts.subject,
     html: opts.html,
+    attachments: opts.attachments?.length
+      ? opts.attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType }))
+      : undefined,
   })
   return { messageId: info?.messageId || null }
 }

@@ -24,6 +24,7 @@ import { buildDailyCloseReport } from '../email/reports/daily-close.js'
 import { buildCostChangesReport } from '../email/reports/cost-changes.js'
 import { buildArApReport } from '../email/reports/ar-ap.js'
 import { buildDailyDigest } from '../email/reports/daily-digest.js'
+import { boxClosurePdf } from '../email/core-pdf.js'
 
 const TZ = 'America/Santo_Domingo'
 
@@ -113,6 +114,7 @@ async function deliverEmail(opts: {
   isCritical: boolean
   subscriptionId: string
   outboxId?: string | null
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>
 }): Promise<'sent' | 'capped'> {
   if (!opts.isCritical) {
     const sentToday = await countCompanyEmailsSentToday(opts.smtp.company_id)
@@ -122,7 +124,7 @@ async function deliverEmail(opts: {
     }
   }
   const { to, cc, bcc } = splitRecipients(opts.recipients)
-  const result = await sendEmail(opts.smtp, { to: to.length ? to : [...cc, ...bcc], cc, bcc, subject: opts.subject, html: opts.html })
+  const result = await sendEmail(opts.smtp, { to: to.length ? to : [...cc, ...bcc], cc, bcc, subject: opts.subject, html: opts.html, attachments: opts.attachments })
   for (const r of opts.recipients) {
     await logDelivery({
       outbox_id: opts.outboxId || null, subscription_id: opts.subscriptionId, channel: 'email',
@@ -606,10 +608,17 @@ async function processOutboxRow(row: OutboxRow): Promise<'sent' | 'skipped' | 'r
     posBaseUrl: smtp.pos_base_url,
   })
 
+  // Adjuntar el PDF real del cierre de caja (best-effort; si falla, va sin adjunto).
+  let attachments: Array<{ filename: string; content: Buffer; contentType?: string }> | undefined
+  if (row.event_code === 'BOX_SHIFT_CLOSE' && row.payload?.box_entry_id) {
+    const pdf = await boxClosurePdf(Number(row.payload.box_entry_id))
+    if (pdf) attachments = [pdf]
+  }
+
   try {
     const res = await deliverEmail({
       smtp, recipients, subject, html,
-      isCritical: !!sub.is_critical, subscriptionId: sub.id, outboxId: row.id,
+      isCritical: !!sub.is_critical, subscriptionId: sub.id, outboxId: row.id, attachments,
     })
     if (res === 'capped') {
       await markOutbox(row.id, 'skipped', 'Tope diario de correos alcanzado')
