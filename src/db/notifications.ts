@@ -159,6 +159,32 @@ export async function getRecipients(subscriptionId: string): Promise<Recipient[]
   )
 }
 
+/**
+ * Destinatarios EFECTIVOS de un evento: los de la suscripción UNIÓN los de la
+ * categoría del evento (ruteo por rol). Deduplicados por correo; excluye
+ * suprimidos. La suscripción manda el `kind` si un correo está en ambos.
+ */
+export async function getEffectiveRecipients(sub: SubscriptionRow): Promise<Recipient[]> {
+  const own = await getRecipients(sub.id)
+  const cat = await query<Recipient>(
+    `SELECT cr.email, cr.display_name, cr.kind
+       FROM notifications.category_recipients cr
+       JOIN notifications.event_types et ON et.category_id = cr.category_id
+      WHERE et.id = $1 AND cr.business_unit_id = $2 AND cr.is_active
+        AND (cr.location_id = $3 OR cr.location_id IS NULL)
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications.suppressed_emails se WHERE lower(se.email) = lower(cr.email))`,
+    [sub.event_type_id, sub.business_unit_id, sub.location_id],
+  ).catch(() => [] as Recipient[])
+  const seen = new Set(own.map((r) => r.email.toLowerCase()))
+  const merged = [...own]
+  for (const r of cat) {
+    const k = r.email.toLowerCase()
+    if (!seen.has(k)) { seen.add(k); merged.push(r) }
+  }
+  return merged
+}
+
 /** Correos enviados HOY (fecha local RD) por la compañía — para el circuit breaker. */
 export async function countCompanyEmailsSentToday(companyId: number): Promise<number> {
   const rows = await query<{ n: string }>(

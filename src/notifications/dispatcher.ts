@@ -11,7 +11,7 @@
 import { query } from '../db/pool.js'
 import { env } from '../config/env.js'
 import {
-  claimOutboxBatch, resolveSubscription, getRecipients, markOutbox,
+  claimOutboxBatch, resolveSubscription, getRecipients, getEffectiveRecipients, markOutbox,
   scheduleRetryOrFail, getDueScheduled, getLocationNames,
   getSmtpConfigForBusinessUnit, logDelivery,
   countCompanyEmailsSentToday, capWarningSentToday,
@@ -173,7 +173,7 @@ async function prepareOutboxGroups(): Promise<{ digestSent: number; quietDeferre
       }
       // Madura → un solo correo resumen
       try {
-        const recipients = await getRecipients(sub.id)
+        const recipients = await getEffectiveRecipients(sub)
         if (!recipients.length) { await markOutboxMany(g.ids, 'skipped', 'Sin destinatarios'); continue }
         const smtp = await getSmtpConfigForBusinessUnit(g.business_unit_id)
         if (!smtp) { await markOutboxMany(g.ids, 'skipped', 'Compañía sin SMTP'); continue }
@@ -583,7 +583,7 @@ async function processOutboxRow(row: OutboxRow): Promise<'sent' | 'skipped' | 'r
     }
   }
 
-  const recipients = await getRecipients(sub.id)
+  const recipients = await getEffectiveRecipients(sub)
   if (!recipients.length) {
     await markOutbox(row.id, 'skipped', 'La suscripción no tiene destinatarios (o todos suprimidos)')
     return 'skipped'
@@ -686,7 +686,7 @@ async function runScheduled(): Promise<{ due: number; sent: number; empty: numbe
     if (!claimed.length) continue
 
     try {
-      const recipients = await getRecipients(sub.id)
+      const recipients = await getEffectiveRecipients(sub)
       if (!recipients.length) { out.empty++; continue }
       const smtp = await getSmtpConfigForBusinessUnit(sub.business_unit_id)
       if (!smtp) {
