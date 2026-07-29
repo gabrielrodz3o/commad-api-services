@@ -58,6 +58,9 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
   const boxScope = sub.location_id ? 'AND bx.location_id = $2' : ''
   const boxes = await query<any>(
     `SELECT bx.name AS box_name, l.description_long AS location_name,
+            be.shift_code,
+            to_char(be.open_at AT TIME ZONE '${TZ}', 'HH24:MI') AS open_hm,
+            to_char(be.close_at AT TIME ZONE '${TZ}', 'HH24:MI') AS close_hm,
             u.use_fullname AS closed_by, be.close_at,
             COALESCE(SUM(bec.amount_closed) FILTER (WHERE bec.is_closed), 0) AS total_closed,
             COALESCE(SUM(bec.difference) FILTER (WHERE bec.is_closed), 0) AS difference
@@ -69,7 +72,7 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
       WHERE bx.business_unit_id = $1 ${boxScope}
         AND be.close_at IS NOT NULL
         AND be.close_at::date = ${TARGET}
-      GROUP BY bx.name, l.description_long, u.use_fullname, be.close_at
+      GROUP BY bx.name, l.description_long, be.shift_code, be.open_at, be.close_at, u.use_fullname
       ORDER BY be.close_at`,
     params,
   )
@@ -147,11 +150,13 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
   }
 
   if (boxes.length) {
-    body += sectionHead('Cierres de caja') +
+    body += sectionHead('Cierres de caja por turno') +
       dataTable(
-        ['Caja', 'Sucursal', 'Cerró', 'Contado', 'Diferencia'],
+        ['Caja', 'Turno', 'Cerró', 'Contado', 'Diferencia'],
         boxes.map((r) => [
-          esc(r.box_name), esc(r.location_name), esc(r.closed_by || 'N/D'), money(r.total_closed),
+          esc(r.box_name),
+          `${esc(r.shift_code || '—')}<br><span style="color:#8a94a6">${esc(r.open_hm)}–${esc(r.close_hm)}</span>`,
+          esc(r.closed_by || 'N/D'), money(r.total_closed),
           Math.abs(Number(r.difference)) >= 0.01
             ? `<span style="color:#c92a2a;font-weight:700">${money(r.difference)}</span>`
             : '<span style="color:#2f9e44">✔</span>',
