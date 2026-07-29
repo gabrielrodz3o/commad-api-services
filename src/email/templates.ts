@@ -26,8 +26,18 @@ export function layout(opts: {
   subtitle?: string | null
   bodyHtml: string
   footerNote?: string | null
+  cta?: { url: string; label: string } | null
 }): string {
   const accent = ACCENT[opts.kind || 'info']
+  const ctaHtml = opts.cta
+    ? `<div style="margin-top:20px">
+         <a href="${opts.cta.url}" target="_blank"
+            style="display:inline-block;background:${accent};color:#ffffff;text-decoration:none;
+                   font-size:14px;font-weight:bold;padding:11px 22px;border-radius:8px">
+           ${esc(opts.cta.label)} →
+         </a>
+       </div>`
+    : ''
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#212529">
@@ -38,7 +48,7 @@ export function layout(opts: {
           <div style="color:#ffffff;font-size:18px;font-weight:bold">${esc(opts.title)}</div>
           ${opts.subtitle ? `<div style="color:rgba(255,255,255,.85);font-size:13px;margin-top:4px">${esc(opts.subtitle)}</div>` : ''}
         </td></tr>
-        <tr><td style="padding:24px">${opts.bodyHtml}</td></tr>
+        <tr><td style="padding:24px">${opts.bodyHtml}${ctaHtml}</td></tr>
         <tr><td style="padding:14px 24px;background:#f8f9fa;border-top:1px solid #e9ecef">
           <div style="color:#868e96;font-size:11px">
             ${esc(opts.footerNote || 'Notificación automática de ComandPOS — configurable en Ajustes → Notificaciones.')}
@@ -48,6 +58,26 @@ export function layout(opts: {
     </td></tr>
   </table>
 </body></html>`
+}
+
+/**
+ * Enlace accionable "Abrir en ComandPOS" según el evento. Requiere pos_base_url
+ * configurado por la compañía. Devuelve null si no hay base o ruta clara.
+ * Factura: /documents/<invoice_id> (pantalla real de factura del POS).
+ */
+export function buildPosCta(eventCode: string, payload: any, baseUrl?: string | null): { url: string; label: string } | null {
+  if (!baseUrl) return null
+  const base = baseUrl.replace(/\/+$/, '')
+  const p = payload || {}
+  const inv = p.invoice_id
+  switch (eventCode) {
+    case 'INVOICE_CANCELLED':
+      return inv ? { url: `${base}/documents/${inv}`, label: 'Ver factura' } : null
+    case 'INVOICE_MODIFIED':
+      return inv ? { url: `${base}/documents/${inv}`, label: 'Ver factura' } : null
+    default:
+      return null
+  }
 }
 
 /** Tabla clave→valor para los correos de alerta. */
@@ -97,6 +127,8 @@ interface EventContext {
   payload: any
   /** Momento en que ocurrió el evento (created_at del outbox). */
   occurredAt?: string | null
+  /** URL base del POS para el botón "Abrir en ComandPOS". */
+  posBaseUrl?: string | null
 }
 
 export function renderEventEmail(ctx: EventContext): { subject: string; html: string } {
@@ -345,6 +377,7 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
       title,
       subtitle: place,
       bodyHtml: kvTable(rows) + (resolved.extra || '') + (p._body ? `<div style="margin-top:14px;font-size:13px;color:#495057">${esc(p._body)}</div>` : ''),
+      cta: buildPosCta(ctx.eventCode, p, ctx.posBaseUrl),
     }),
   }
 }

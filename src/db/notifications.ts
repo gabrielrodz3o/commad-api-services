@@ -16,6 +16,7 @@ export interface SmtpConfig {
   reply_to: string | null
   is_active: boolean
   daily_send_limit: number
+  pos_base_url: string | null
 }
 
 export interface OutboxRow {
@@ -64,7 +65,8 @@ export async function getSmtpConfigForCompany(companyId: number): Promise<SmtpCo
     `SELECT company_id, smtp_host, smtp_port, smtp_secure, smtp_user,
             notifications.pgp_sym_decrypt(smtp_password_enc, $2) AS smtp_password,
             from_email, from_name, reply_to, is_active,
-            COALESCE(daily_send_limit, 300) AS daily_send_limit
+            COALESCE(daily_send_limit, 300) AS daily_send_limit,
+            pos_base_url
        FROM notifications.company_smtp_config
       WHERE company_id = $1 AND deleted_at IS NULL AND is_active`,
     [companyId, env.NOTIF_SMTP_ENC_KEY],

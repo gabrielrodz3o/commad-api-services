@@ -61,6 +61,7 @@ export function notificationRoutes(app: FastifyInstance) {
         reply_to: null,
         is_active: true,
         daily_send_limit: 300,
+        pos_base_url: null,
       }
     } else {
       if (!env.NOTIF_SMTP_ENC_KEY) {

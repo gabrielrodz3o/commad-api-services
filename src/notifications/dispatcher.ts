@@ -602,6 +602,7 @@ async function processOutboxRow(row: OutboxRow): Promise<'sent' | 'skipped' | 'r
     location: names.location,
     payload: row.payload,
     occurredAt: row.created_at,
+    posBaseUrl: smtp.pos_base_url,
   })
 
   try {
