@@ -16,7 +16,11 @@ export async function buildDailyDigest(sub: SubscriptionRow, names: { business: 
     : (await query<{ id: number }>(`SELECT id FROM human_resource.locations WHERE business_unit_id = $1`, [sub.business_unit_id])).map((r) => r.id)
   if (!locs.length) return null
 
-  const today = `(now() AT TIME ZONE '${TZ}')::date`
+  // Día objetivo = el que cerró: en la mañana (antes del mediodía) resume AYER;
+  // en la tarde/noche, HOY. Evita el resumen en ceros de madrugada.
+  const localDate = `(now() AT TIME ZONE '${TZ}')::date`
+  const today = `(CASE WHEN (now() AT TIME ZONE '${TZ}')::time < TIME '12:00'
+                       THEN (${localDate} - 1) ELSE ${localDate} END)`
 
   const one = async (sql: string, params: any[]) => {
     try { return (await query<any>(sql, params))[0] || { n: 0, total: 0 } }
@@ -90,7 +94,9 @@ export async function buildDailyDigest(sub: SubscriptionRow, names: { business: 
 
   const totalEventos = Number(anul.n) + Number(desc.n) + Number(cort.n) + Number(del.n) + Number(waste.n) + Number(boxes.n) + Number(counts.n)
   const place = names.location ? `${names.business} — ${names.location}` : `${names.business} (todas las sucursales)`
-  const dateStr = new Date().toLocaleDateString('es-DO', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  const tdRows = await query<{ d: string }>(`SELECT to_char(${today}, 'YYYY-MM-DD') AS d`).catch(() => [] as { d: string }[])
+  const targetIso = tdRows[0]?.d || new Date().toISOString().slice(0, 10)
+  const dateStr = new Date(`${targetIso}T12:00:00Z`).toLocaleDateString('es-DO', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
   const body = totalEventos === 0
     ? `<div style="font-size:14px;color:#2f9e44">✔ Día sin incidencias de control registradas.</div>`

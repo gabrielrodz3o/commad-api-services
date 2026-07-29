@@ -13,6 +13,14 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
   const scopeSql = sub.location_id ? 'AND i.location_id = $2' : ''
   const params: any[] = sub.location_id ? [sub.business_unit_id, sub.location_id] : [sub.business_unit_id]
 
+  // Día objetivo del "cierre del día": el que YA CERRÓ. Si el reporte corre en la
+  // mañana (antes del mediodía) resume AYER; si corre en la tarde/noche, HOY.
+  // Evita el bug de enviar el día nuevo en ceros de madrugada.
+  const localDate = `(now() AT TIME ZONE '${TZ}')::date`
+  const TARGET = `(CASE WHEN (now() AT TIME ZONE '${TZ}')::time < TIME '12:00'
+                        THEN (${localDate} - 1)
+                        ELSE ${localDate} END)`
+
   const sales = await query<any>(
     `SELECT l.description_long AS location_name,
             COUNT(*) FILTER (WHERE i.invoice_type_id = 2)::int AS invoices,
@@ -25,7 +33,7 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
         AND i.status_id = 1
         AND i.invoice_type_id IN (2, 3)
         AND i.dgii_status IS DISTINCT FROM 'RECHAZADO'
-        AND i.created_date::date = (now() AT TIME ZONE '${TZ}')::date
+        AND i.created_date::date = ${TARGET}
       GROUP BY l.description_long
       ORDER BY gross DESC`,
     params,
@@ -41,7 +49,7 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
        JOIN finances.invoices i ON i.id = ipd.invoice_id
       WHERE i.business_unit_id = $1 ${scopeSql}
         AND i.status_id = 1 AND i.invoice_type_id = 2
-        AND i.created_date::date = (now() AT TIME ZONE '${TZ}')::date
+        AND i.created_date::date = ${TARGET}
       GROUP BY ipt.name
       ORDER BY amount DESC`,
     params,
@@ -60,7 +68,7 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
        LEFT JOIN finances.box_entry_amount_by_currencies bec ON bec.box_entry_id = be.id
       WHERE bx.business_unit_id = $1 ${boxScope}
         AND be.close_at IS NOT NULL
-        AND be.close_at::date = (now() AT TIME ZONE '${TZ}')::date
+        AND be.close_at::date = ${TARGET}
       GROUP BY bx.name, l.description_long, u.use_fullname, be.close_at
       ORDER BY be.close_at`,
     params,
@@ -76,7 +84,7 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
        JOIN restaurant.accounts a ON a.id = o.account_id
        JOIN human_resource.locations l ON l.id = a.location_id
       WHERE od.discount_amount > 0
-        AND a.created_at::date = (now() AT TIME ZONE '${TZ}')::date
+        AND a.created_at::date = ${TARGET}
         ${discScope}`,
     [discParam],
   ).catch(() => [{ lines: 0, amount: 0 }])
@@ -90,7 +98,10 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
   const discLines = Number(discounts[0]?.lines) || 0
 
   const place = names.location ? `${names.business} — ${names.location}` : `${names.business} (todas las sucursales)`
-  const dateStr = new Date().toLocaleDateString('es-DO', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  // Fecha mostrada = el día objetivo (el que cerró), consistente con las queries.
+  const tdRows = await query<{ d: string }>(`SELECT to_char(${TARGET}, 'YYYY-MM-DD') AS d`).catch(() => [])
+  const targetIso = tdRows[0]?.d || new Date().toISOString().slice(0, 10)
+  const dateStr = new Date(`${targetIso}T12:00:00Z`).toLocaleDateString('es-DO', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
   let body = kvTable([
     ['Facturas emitidas', String(totInvoices)],
@@ -136,7 +147,7 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
         ['left', 'left', 'left', 'right', 'right'],
       )
   } else {
-    body += `<div style="margin-top:18px;font-size:12px;color:#868e96">Sin cierres de caja registrados hoy.</div>`
+    body += `<div style="margin-top:18px;font-size:12px;color:#868e96">Sin cierres de caja registrados ese día.</div>`
   }
 
   return {
