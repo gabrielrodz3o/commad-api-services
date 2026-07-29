@@ -360,17 +360,28 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
         ['Ordenado', esc(p.ordered_at || dash)],
       ],
     }),
-    NCF_RUNNING_OUT: () => ({
-      kind: 'alert',
-      rows: [
-        ['Tipo de comprobante', esc(p.voucher_type)],
-        ['Disponibles', `<span style="color:${Number(p.remaining) <= 0 ? '#c92a2a' : '#e8590c'};font-size:16px;font-weight:bold">${esc(p.remaining)}</span> (umbral: ${esc(p.threshold)})`],
-        ['Próximo vencimiento de secuencia', p.next_expiration ? fmtDateTime(p.next_expiration).split(',')[0] : dash],
-        ['Acción requerida', Number(p.remaining) <= 0
-          ? '<span style="color:#c92a2a">SOLICITAR NCF A DGII DE INMEDIATO — no se puede facturar este tipo</span>'
-          : 'Solicitar nueva secuencia de NCF a la DGII antes de que se agoten'],
-      ],
-    }),
+    NCF_RUNNING_OUT: () => {
+      const agotado = Number(p.available) === 0
+      const runway = p.runway_days == null ? null : Number(p.runway_days)
+      const fmtD = (v: any) => v ? fmtDateTime(v).split(',')[0] : dash
+      return {
+        kind: 'alert' as const,
+        rows: [
+          ['Tipo de comprobante', `${esc(p.voucher_type)}${p.serie ? ` (serie ${esc(p.serie)}${p.serie === 'E' ? ' · e-CF' : ' · físico'})` : ''}`],
+          ['Disponibles', `<span style="color:${agotado ? '#c92a2a' : '#e8590c'};font-size:16px;font-weight:800">${esc(p.available)}</span> comprobantes`],
+          ['Autonomía estimada', agotado
+            ? '<span style="color:#c92a2a;font-weight:700">AGOTADO — no se puede facturar</span>'
+            : (runway != null ? `<span style="color:${p.severity === 'critical' ? '#c92a2a' : '#e8590c'};font-weight:700">~${runway} día${runway === 1 ? '' : 's'}</span>` : 'Sin consumo reciente')],
+          ['Consumo (tasa diaria)', p.daily_rate ? `${esc(p.daily_rate)} / día` : dash],
+          ['Fecha estimada de agotamiento', fmtD(p.depletion_date)],
+          ['Próximo vencimiento de secuencia', fmtD(p.next_expiration) + (p.days_to_expiration != null ? ` (${esc(p.days_to_expiration)} día${Number(p.days_to_expiration) === 1 ? '' : 's'})` : '')],
+          ['Riesgo de no facturar', Number(p.daily_amount_risk) > 0 ? `${money(p.daily_amount_risk)} / día` : dash],
+          ['Acción requerida', agotado
+            ? '<span style="color:#c92a2a">SOLICITAR NCF A DGII DE INMEDIATO</span>'
+            : (p.serie === 'B' ? 'Solicitar nueva secuencia a DGII (los físicos tardan días en aprobarse)' : 'Solicitar nueva secuencia de e-CF a la DGII')],
+        ],
+      }
+    },
     PLATFORM_ORDER_FAILED: () => ({
       kind: 'alert',
       rows: [

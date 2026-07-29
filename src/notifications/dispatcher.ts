@@ -382,33 +382,46 @@ async function runBusinessWatchers(): Promise<{ scanned: number; enqueued: numbe
     const locScope = sub.location_id != null
     try {
       switch (sub.event_code) {
-        // ── NCF por agotarse: por tipo de comprobante, solo tipos con consumo
-        //    reciente (45d) para no alertar series muertas. 1 alerta/día/tipo.
+        // ── NCF por agotarse: INTELIGENTE. Lee finances.voucher_alerts, que el
+        //    core recalcula cada 6h con proyección por consumo reciente (runway
+        //    = disponibles / tasa 7d), severidad crítico/warning por DÍAS de
+        //    autonomía (no por conteo fijo), y cruce con vencimiento del stock.
+        //    Así "quedan 50" alerta según cuánto duran, no un número tonto.
+        //    1 alerta/día/tipo. El umbral de la suscripción NO aplica aquí.
         case 'NCF_RUNNING_OUT': {
           const rows = await query<any>(
-            `SELECT ivt.id AS type_id,
-                    COALESCE(NULLIF(ivt.name, ''), ivt.code, 'Tipo ' || ivt.id) AS type_name,
-                    COUNT(*) FILTER (WHERE s.invoice_id IS NULL AND s.is_active)::int AS remaining,
-                    MIN(s.expiration_date) FILTER (WHERE s.invoice_id IS NULL AND s.is_active) AS next_expiration,
+            `SELECT va.invoice_voucher_type_id AS type_id,
+                    COALESCE(NULLIF(t.name, ''), t.code, 'Tipo ' || va.invoice_voucher_type_id) AS type_name,
+                    va.severity, va.serie, va.available, va.daily_rate, va.runway_days,
+                    va.depletion_date, va.next_expiration, va.days_to_expiration,
+                    va.daily_amount_risk, va.reason,
                     (now() AT TIME ZONE '${TZ}')::date AS local_date
-               FROM finances.invoice_voucher_sequentials s
-               JOIN finances.invoice_voucher_types ivt ON ivt.id = s.invoice_voucher_type_id
-               LEFT JOIN finances.invoices i ON i.id = s.invoice_id
-              WHERE s.business_unit_id = $1
-              GROUP BY ivt.id, ivt.name, ivt.code
-             HAVING COUNT(*) FILTER (WHERE s.invoice_id IS NULL AND s.is_active) < $2
-                AND MAX(i.created_date) >= now() - interval '45 days'`,
-            [sub.business_unit_id, threshold],
+               FROM finances.voucher_alerts va
+               JOIN finances.invoice_voucher_types t ON t.id = va.invoice_voucher_type_id
+              WHERE va.business_unit_id = $1
+                AND va.severity IN ('critical', 'warning')`,
+            [sub.business_unit_id],
           )
           for (const r of rows) {
+            const crit = r.severity === 'critical'
+            const agotado = Number(r.available) === 0
+            const runway = r.runway_days == null ? null : Number(r.runway_days)
+            const title = agotado
+              ? `🚨 NCF AGOTADOS: ${r.type_name}`
+              : `${crit ? '🚨 ' : ''}NCF por agotarse: ${r.type_name}${runway != null ? ` (~${runway} día${runway === 1 ? '' : 's'})` : ''}`
             const ok = await enqueueOutbox(sub, sub.location_id, {
               voucher_type: r.type_name,
-              remaining: r.remaining,
-              threshold,
+              serie: r.serie,
+              severity: r.severity,
+              available: Number(r.available),
+              daily_rate: Number(r.daily_rate),
+              runway_days: runway,
+              depletion_date: r.depletion_date,
               next_expiration: r.next_expiration,
-              _title: r.remaining <= 0
-                ? `🚨 NCF AGOTADOS: ${r.type_name}`
-                : `NCF por agotarse: ${r.type_name} (quedan ${r.remaining})`,
+              days_to_expiration: r.days_to_expiration,
+              daily_amount_risk: Number(r.daily_amount_risk),
+              reason: r.reason,
+              _title: title,
             }, `NCF_RUNNING_OUT:bu${sub.business_unit_id}:type${r.type_id}:loc${sub.location_id ?? 'all'}:${r.local_date}`)
             if (ok) enqueued++
           }
