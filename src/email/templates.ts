@@ -103,6 +103,46 @@ export function dataTable(headers: string[], rows: string[][], align: Array<'lef
     <thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>`
 }
 
+/**
+ * KPI hero: número grande destacado (venta neta) con contexto secundario.
+ * Email-safe (tablas + inline styles).
+ */
+export function heroStat(opts: { label: string; value: string; context?: string; accent?: string }): string {
+  const accent = opts.accent || '#2f9e44'
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px">
+    <tr><td style="background:#f8fbf9;border:1px solid #e3f0e8;border-left:4px solid ${accent};border-radius:10px;padding:16px 20px">
+      <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">${esc(opts.label)}</div>
+      <div style="font-size:30px;font-weight:800;color:#111827;line-height:1.1;margin-top:4px">${opts.value}</div>
+      ${opts.context ? `<div style="font-size:12px;color:#6b7280;margin-top:6px">${opts.context}</div>` : ''}
+    </td></tr></table>`
+}
+
+/**
+ * Cuadrícula de indicadores (2 por fila, mobile-safe). Cada tile: etiqueta + valor.
+ */
+export function statTiles(tiles: Array<{ label: string; value: string; color?: string }>): string {
+  const cell = (t?: { label: string; value: string; color?: string }) => t
+    ? `<td width="50%" style="padding:6px">
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #eceff3;border-radius:10px">
+           <tr><td style="padding:12px 14px">
+             <div style="font-size:11px;color:#8a94a6;text-transform:uppercase;letter-spacing:.4px">${esc(t.label)}</div>
+             <div style="font-size:18px;font-weight:700;color:${t.color || '#111827'};margin-top:3px">${t.value}</div>
+           </td></tr>
+         </table>
+       </td>`
+    : '<td width="50%" style="padding:6px"></td>'
+  let rows = ''
+  for (let i = 0; i < tiles.length; i += 2) {
+    rows += `<tr>${cell(tiles[i])}${cell(tiles[i + 1])}</tr>`
+  }
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 -6px 8px">${rows}</table>`
+}
+
+/** Encabezado de sección con estilo (línea + título). */
+export function sectionHead(text: string): string {
+  return `<div style="margin:22px 0 8px;font-size:13px;font-weight:700;color:#374151;border-bottom:2px solid #eceff3;padding-bottom:6px">${esc(text)}</div>`
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Render por tipo de evento realtime/watcher (los reportes scheduled tienen sus
 // propios renders en src/email/reports/*).

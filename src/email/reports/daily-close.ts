@@ -5,7 +5,7 @@
 //   ventas = invoice_type_id 2, NC = 3 (resta), status_id = 1, DGII no rechazada.
 import { query } from '../../db/pool.js'
 import type { SubscriptionRow } from '../../db/notifications.js'
-import { layout, dataTable, kvTable, money, esc } from '../templates.js'
+import { layout, dataTable, money, esc, heroStat, statTiles, sectionHead } from '../templates.js'
 
 const TZ = 'America/Santo_Domingo'
 
@@ -103,51 +103,63 @@ export async function buildDailyCloseReport(sub: SubscriptionRow, names: { busin
   const targetIso = tdRows[0]?.d || new Date().toISOString().slice(0, 10)
   const dateStr = new Date(`${targetIso}T12:00:00Z`).toLocaleDateString('es-DO', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
-  let body = kvTable([
-    ['Facturas emitidas', String(totInvoices)],
-    ['Venta bruta', money(totGross)],
-    ['Notas de crédito', totNc ? `-${money(totNc)}` : money(0)],
-    ['Venta neta', `<span style="font-size:16px">${money(net)}</span>`],
-    ['Ticket promedio', money(avgTicket)],
-    ['Descuentos aplicados', discAmount ? `${money(discAmount)} (${discLines} línea${discLines === 1 ? '' : 's'})` : 'Ninguno'],
+  const totBoxDiff = boxes.reduce((a, r) => a + Number(r.difference || 0), 0)
+
+  // Hero: venta neta del día + contexto (bruta / NC).
+  let body = heroStat({
+    label: 'Venta neta del día',
+    value: money(net),
+    context: `Bruta ${money(totGross)}${totNc ? ` · Notas de crédito -${money(totNc)}` : ''}`,
+  })
+
+  // KPIs en tarjetas.
+  body += statTiles([
+    { label: 'Facturas emitidas', value: String(totInvoices) },
+    { label: 'Ticket promedio', value: money(avgTicket) },
+    { label: 'Descuentos', value: discAmount ? money(discAmount) : '—', color: discAmount ? '#d9480f' : '#111827' },
+    { label: 'Diferencia de caja', value: Math.abs(totBoxDiff) >= 0.01 ? money(totBoxDiff) : 'Cuadrada', color: Math.abs(totBoxDiff) >= 0.01 ? '#c92a2a' : '#2f9e44' },
   ])
 
   if (!sub.location_id && sales.length > 1) {
-    body += `<div style="margin-top:18px;font-size:13px;font-weight:bold;color:#495057">Por sucursal</div>` +
+    body += sectionHead('Venta por sucursal') +
       dataTable(
         ['Sucursal', 'Facturas', 'Bruta', 'NC', 'Neta'],
         sales.map((r) => [
           esc(r.location_name), String(r.invoices), money(r.gross),
           Number(r.nc_amount) ? `-${money(r.nc_amount)}` : '—',
-          money(Number(r.gross) - Number(r.nc_amount)),
+          `<strong>${money(Number(r.gross) - Number(r.nc_amount))}</strong>`,
         ]),
         ['left', 'right', 'right', 'right', 'right'],
       )
   }
 
   if (payments.length) {
-    body += `<div style="margin-top:18px;font-size:13px;font-weight:bold;color:#495057">Formas de pago</div>` +
+    const totPay = payments.reduce((a, r) => a + Number(r.amount), 0)
+    body += sectionHead('Formas de pago') +
       dataTable(
         ['Forma de pago', 'Pagos', 'Monto'],
-        payments.map((r) => [esc(r.payment_type), String(r.payments), money(r.amount)]),
+        [
+          ...payments.map((r) => [esc(r.payment_type), String(r.payments), money(r.amount)]),
+          [`<strong>Total</strong>`, '', `<strong>${money(totPay)}</strong>`],
+        ],
         ['left', 'right', 'right'],
       )
   }
 
   if (boxes.length) {
-    body += `<div style="margin-top:18px;font-size:13px;font-weight:bold;color:#495057">Cierres de caja</div>` +
+    body += sectionHead('Cierres de caja') +
       dataTable(
         ['Caja', 'Sucursal', 'Cerró', 'Contado', 'Diferencia'],
         boxes.map((r) => [
           esc(r.box_name), esc(r.location_name), esc(r.closed_by || 'N/D'), money(r.total_closed),
           Math.abs(Number(r.difference)) >= 0.01
-            ? `<span style="color:#d9480f">${money(r.difference)}</span>`
-            : '✔',
+            ? `<span style="color:#c92a2a;font-weight:700">${money(r.difference)}</span>`
+            : '<span style="color:#2f9e44">✔</span>',
         ]),
         ['left', 'left', 'left', 'right', 'right'],
       )
   } else {
-    body += `<div style="margin-top:18px;font-size:12px;color:#868e96">Sin cierres de caja registrados ese día.</div>`
+    body += `<div style="margin-top:16px;font-size:12px;color:#868e96">Sin cierres de caja registrados ese día.</div>`
   }
 
   return {
