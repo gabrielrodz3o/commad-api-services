@@ -553,10 +553,10 @@ export function renderDigestEmail(opts: {
   }
 
   const body =
-    heroStat({ label: opts.eventName, value: `${n} <span style="font-size:15px;font-weight:600;color:#6b7280">notificación${n === 1 ? '' : 'es'}</span>`, context: 'Agrupadas para no saturar tu bandeja', accent: '#0b7285' }) +
+    heroStat({ label: opts.eventName, value: `${n} <span style="font-size:15px;font-weight:600;color:#6b7280">${n === 1 ? 'notificación' : 'notificaciones'}</span>`, context: 'Agrupadas para no saturar tu bandeja', accent: '#0b7285' }) +
     table
   return {
-    subject: `[${opts.place}] ${opts.eventName}: ${n} notificación${n === 1 ? '' : 'es'}`,
+    subject: `[${opts.place}] ${opts.eventName}: ${n} ${n === 1 ? 'notificación' : 'notificaciones'}`,
     html: layout({ kind: 'info', title: `${opts.eventName} — resumen`, subtitle: opts.place, bodyHtml: body }),
   }
 }
