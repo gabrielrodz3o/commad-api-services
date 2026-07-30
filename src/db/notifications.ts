@@ -237,6 +237,7 @@ export interface OutboxGroup {
   location_id: number | null
   ids: string[]
   payloads: any[]
+  created_ats: string[]
   oldest: string
   n: number
 }
@@ -245,6 +246,7 @@ export async function getPendingGroups(): Promise<OutboxGroup[]> {
     `SELECT event_type_id, business_unit_id, location_id,
             array_agg(id ORDER BY created_at) AS ids,
             json_agg(payload ORDER BY created_at) AS payloads,
+            array_agg(created_at ORDER BY created_at) AS created_ats,
             min(created_at) AS oldest,
             count(*)::int AS n
        FROM notifications.outbox

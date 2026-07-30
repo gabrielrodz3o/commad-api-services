@@ -495,21 +495,68 @@ function dashSafe(v: any): string { return v == null || v === '' ? '—' : Strin
  * descuentos, retrasos) que de otro modo mandarían un correo por cada uno.
  */
 export function renderDigestEmail(opts: {
+  eventCode?: string
   eventName: string
   place: string
-  items: Array<{ title: string; at?: string | null; body?: string | null }>
+  items: Array<{ payload?: any; title?: string; at?: string | null; body?: string | null }>
 }): { subject: string; html: string } {
   const n = opts.items.length
-  const rows = opts.items.map((it, i) => [
-    String(i + 1),
-    esc(it.title || opts.eventName),
-    it.at ? fmtDateTime(it.at) : dash,
-  ])
+  const at = (it: any) => (it.at ? fmtDateTime(it.at) : dash)
+  let table: string
+  const code = opts.eventCode
+
+  // Columnas ricas según el tipo de evento (muestran quién, valor, motivo…).
+  if (code === 'ORDER_ITEM_DELETED') {
+    table = dataTable(
+      ['Artículo', 'Valor', 'Cant.', 'Usuario', 'Motivo', 'Cuándo'],
+      opts.items.map((it) => {
+        const p = it.payload || {}
+        return [
+          esc(p.item_name || '—'), money(p.total_value), esc(p.quantity ?? '—'),
+          esc(p.deleted_by || p.cancelled_by || 'N/D'), esc(p.reason || '—'), at(it),
+        ]
+      }),
+      ['left', 'right', 'right', 'left', 'left', 'left'],
+    )
+  } else if (code === 'EMPLOYEE_DISCOUNT') {
+    table = dataTable(
+      ['Descuento', 'Cuenta', 'Autorizó', 'Motivo', 'Cuándo'],
+      opts.items.map((it) => {
+        const p = it.payload || {}
+        return [
+          `${money(p.total_discount)} (${esc(p.percent)}%)`,
+          esc(p.table_name ? 'Mesa ' + p.table_name : p.account_name || '—'),
+          esc(p.authorized_by_name || 'N/D'), esc(p.reason || '—'), at(it),
+        ]
+      }),
+      ['right', 'left', 'left', 'left', 'left'],
+    )
+  } else if (code === 'DELIVERY_DELAYED' || code === 'ORDER_DELAYED') {
+    table = dataTable(
+      ['Orden', 'Cliente', 'Retraso', 'Estado', 'Cuándo'],
+      opts.items.map((it) => {
+        const p = it.payload || {}
+        return [
+          esc(p.order_code || p.account_name || '—'), esc(p.customer_name || '—'),
+          `${esc(p.minutes)} min`, esc(p.status_name || '—'), at(it),
+        ]
+      }),
+      ['left', 'left', 'right', 'left', 'left'],
+    )
+  } else {
+    // Genérico: título + hora.
+    table = dataTable(
+      ['#', 'Detalle', 'Cuándo'],
+      opts.items.map((it, i) => [String(i + 1), esc(it.title || it.payload?._title || opts.eventName), at(it)]),
+      ['right', 'left', 'left'],
+    )
+  }
+
   const body =
     heroStat({ label: opts.eventName, value: `${n} <span style="font-size:15px;font-weight:600;color:#6b7280">notificación${n === 1 ? '' : 'es'}</span>`, context: 'Agrupadas para no saturar tu bandeja', accent: '#0b7285' }) +
-    dataTable(['#', 'Detalle', 'Cuándo'], rows, ['right', 'left', 'left'])
+    table
   return {
-    subject: `[${opts.place}] ${opts.eventName}: ${n} notificaciones agrupadas`,
+    subject: `[${opts.place}] ${opts.eventName}: ${n} notificación${n === 1 ? '' : 'es'}`,
     html: layout({ kind: 'info', title: `${opts.eventName} — resumen`, subtitle: opts.place, bodyHtml: body }),
   }
 }

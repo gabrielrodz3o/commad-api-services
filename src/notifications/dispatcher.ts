@@ -181,8 +181,11 @@ async function prepareOutboxGroups(): Promise<{ digestSent: number; quietDeferre
         if (!smtp) { await markOutboxMany(g.ids, 'skipped', 'Compañía sin SMTP'); continue }
         const names = await getLocationNames(g.business_unit_id, g.location_id)
         const place = names.location ? `${names.business} — ${names.location}` : names.business
-        const items = (g.payloads || []).map((pl: any) => ({ title: pl?._title || sub.event_name || 'Notificación', at: null, body: pl?._body || null }))
-        const { subject, html } = renderDigestEmail({ eventName: sub.event_name || 'Notificaciones', place, items })
+        const items = (g.payloads || []).map((pl: any, idx: number) => ({
+          payload: pl, title: pl?._title || sub.event_name || 'Notificación',
+          at: g.created_ats?.[idx] || null, body: pl?._body || null,
+        }))
+        const { subject, html } = renderDigestEmail({ eventCode: sub.event_code, eventName: sub.event_name || 'Notificaciones', place, items })
         const res = await deliverEmail({ smtp, recipients, subject, html, isCritical: !!sub.is_critical, subscriptionId: sub.id })
         if (res === 'sent') { await markOutboxMany(g.ids, 'sent'); out.digestSent += g.n }
         else { await markOutboxMany(g.ids, 'skipped', 'Tope diario alcanzado'); out.capped += g.n }
