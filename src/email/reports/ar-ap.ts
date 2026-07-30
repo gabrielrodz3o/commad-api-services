@@ -19,8 +19,11 @@ interface PendingRow {
 }
 
 async function pendingInvoices(businessUnitId: number, kind: 'ar' | 'ap'): Promise<PendingRow[]> {
-  // CxC: facturas de venta a crédito (todo lo que no es compra); CxP: compras.
-  const typeFilter = kind === 'ap' ? 'AND i.invoice_type_id = 1' : 'AND i.invoice_type_id <> 1'
+  // CxC: SOLO facturas de venta (invoice_type_id = 2), NUNCA notas de crédito
+  // (tipo 3) — una NC no es un cobro, es lo contrario. Mismo criterio que la
+  // pantalla real de Cuentas por Cobrar (transactions/accounts-receivable).
+  // CxP: compras (tipo 1).
+  const typeFilter = kind === 'ap' ? 'AND i.invoice_type_id = 1' : 'AND i.invoice_type_id = 2'
   return query<PendingRow>(
     `SELECT e.name AS entity_name,
             i.invoice_number,
