@@ -85,6 +85,28 @@ export async function getSmtpConfigForBusinessUnit(businessUnitId: number): Prom
 }
 
 /**
+ * Config SMTP de PLATAFORMA (ComandPOS, no de una empresa/tenant) — singleton
+ * en notifications.platform_smtp_config. Usada para correos de sistema (ej.
+ * reset de contraseña) que deben funcionar sin depender de si una empresa
+ * configuró su propio servidor de notificaciones. company_id:0 es un sentinel
+ * solo para el cache por-compañía de transporterFor() en email/smtp.ts.
+ */
+export async function getPlatformSmtpConfig(): Promise<SmtpConfig | null> {
+  if (!env.NOTIF_SMTP_ENC_KEY) return null
+  const rows = await query<Omit<SmtpConfig, 'company_id' | 'daily_send_limit' | 'pos_base_url'>>(
+    `SELECT smtp_host, smtp_port, smtp_secure, smtp_user,
+            notifications.pgp_sym_decrypt(smtp_password_enc, $1) AS smtp_password,
+            from_email, from_name, reply_to, is_active
+       FROM notifications.platform_smtp_config
+      WHERE id = 1 AND is_active`,
+    [env.NOTIF_SMTP_ENC_KEY],
+  )
+  const row = rows[0]
+  if (!row) return null
+  return { ...row, company_id: 0, daily_send_limit: 0, pos_base_url: null }
+}
+
+/**
  * Reclama un lote del outbox: marca `processing` con FOR UPDATE SKIP LOCKED
  * (seguro con pgbouncer: transacción explícita corta, sin advisory locks).
  */

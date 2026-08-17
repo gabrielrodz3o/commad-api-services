@@ -17,17 +17,19 @@ const ACCENT: Record<string, string> = {
   alert: '#d9480f',   // alertas operativas (anulación, borrado, diferencia)
   info: '#1971c2',    // informativos (cierre de caja, conteo)
   report: '#0b7285',  // reportes programados (teal ejecutivo)
+  security: '#7048e8', // correos de sistema/seguridad (reset de contraseña)
 }
 const KIND_META: Record<string, { icon: string; label: string }> = {
   alert: { icon: '⚠', label: 'Alerta' },
   info: { icon: 'ℹ', label: 'Notificación' },
   report: { icon: '▣', label: 'Reporte' },
+  security: { icon: '🔒', label: 'Seguridad' },
 }
 const FONT = `-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif`
 
 /** Layout base premium (una sola columna, email-safe con tablas + inline styles). */
 export function layout(opts: {
-  kind?: 'alert' | 'info' | 'report'
+  kind?: 'alert' | 'info' | 'report' | 'security'
   title: string
   subtitle?: string | null
   bodyHtml: string
@@ -411,14 +413,34 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
           )
         : '',
     }),
-    WASTE_HIGH: () => ({
-      kind: 'alert',
-      rows: [
-        ['Costo total de mermas hoy', `<span style="color:#c92a2a;font-size:15px">${money(p.amount)}</span> (umbral ${money(p.threshold)})`],
-        ['Registros de merma', esc(p.wastes)],
-        ['Acción sugerida', 'Revisar el detalle en Inventario → Mermas y validar causas'],
-      ],
-    }),
+    WASTE_HIGH: () => {
+      const items = Array.isArray(p.items) ? p.items : []
+      const detailExtra = items.length
+        ? sectionHead('Detalle de mermas del día') + dataTable(
+            ['Artículo', 'Cant.', 'Costo', 'Tipo / Causa', 'Motivo', 'Merma', 'Hora', 'Registró'],
+            items.map((it: any) => [
+              esc(it.item_name),
+              `${esc(it.quantity)}${it.unit ? ' ' + esc(it.unit) : ''}`,
+              `<b>${money(it.line_cost)}</b>`,
+              esc([it.waste_type, it.waste_cause].filter(Boolean).join(' · ') || '—'),
+              esc(it.reason || '—'),
+              esc(it.waste_number || '—'),
+              esc(it.at_time || '—'),
+              esc(it.created_by || '—'),
+            ]),
+            ['left', 'right', 'right', 'left', 'left', 'left', 'left', 'left'],
+          )
+        : ''
+      return {
+        kind: 'alert',
+        rows: [
+          ['Costo total de mermas hoy', `<span style="color:#c92a2a;font-size:15px">${money(p.amount)}</span> (umbral ${money(p.threshold)})`],
+          ['Registros de merma', esc(p.wastes)],
+          ['Acción sugerida', 'Revisar el detalle abajo y validar causas en Inventario → Mermas'],
+        ],
+        extra: detailExtra,
+      }
+    },
     CUSTOMER_DELINQUENT: () => ({
       kind: 'alert',
       rows: [
@@ -430,16 +452,30 @@ export function renderEventEmail(ctx: EventContext): { subject: string; html: st
         ['Acción sugerida', 'Gestionar cobro / evaluar suspensión de crédito'],
       ],
     }),
-    PIN_FAILED_ATTEMPTS: () => ({
-      kind: 'alert',
-      rows: [
-        ['Intentos fallidos', `<span style="color:#c92a2a;font-size:16px;font-weight:bold">${esc(p.attempts)}</span> en ${esc(p.window_minutes)} minutos (umbral ${esc(p.threshold)})`],
-        ['PIN incorrecto', esc(p.wrong_pin)],
-        ['PIN válido sin perfil autorizado', esc(p.no_profile)],
-        ['PIN válido sin acceso a la sucursal', esc(p.no_access)],
-        ['Posible causa', 'Alguien intentando adivinar un PIN de supervisor — verificar cámaras/personal en turno'],
-      ],
-    }),
+    PIN_FAILED_ATTEMPTS: () => {
+      const acts = Array.isArray(p.actions) ? p.actions : []
+      const actionsExtra = acts.length
+        ? sectionHead('Acciones que se intentaban autorizar') + dataTable(
+            ['Acción', 'Sucursal', 'Intentos'],
+            acts.map((a: any) => [
+              esc(a.action || 'No especificada'),
+              esc(a.location || '—'),
+              `<b>${esc(a.count)}</b>`,
+            ]),
+          )
+        : ''
+      return {
+        kind: 'alert',
+        rows: [
+          ['Intentos fallidos', `<span style="color:#c92a2a;font-size:16px;font-weight:bold">${esc(p.attempts)}</span> en ${esc(p.window_minutes)} minutos (umbral ${esc(p.threshold)})`],
+          ['PIN incorrecto', esc(p.wrong_pin)],
+          ['PIN válido sin perfil autorizado', esc(p.no_profile)],
+          ['PIN válido sin acceso a la sucursal', esc(p.no_access)],
+          ['Posible causa', 'Alguien intentando adivinar un PIN de supervisor — verificar cámaras/personal en turno'],
+        ],
+        extra: actionsExtra,
+      }
+    },
   }
 
   const def = base[ctx.eventCode]
@@ -558,6 +594,43 @@ export function renderDigestEmail(opts: {
   return {
     subject: `[${opts.place}] ${opts.eventName}: ${n} ${n === 1 ? 'notificación' : 'notificaciones'}`,
     html: layout({ kind: 'info', title: `${opts.eventName} — resumen`, subtitle: opts.place, bodyHtml: body }),
+  }
+}
+
+/**
+ * Correo de "olvidé mi contraseña". Correo de sistema/seguridad de ComandPOS
+ * (no de una empresa/tenant) — usa kind:'security' (acento morado, distinto
+ * de las alertas operativas) para que se distinga a simple vista. Incluye el
+ * link también en texto plano (algunos clientes de correo despojan botones).
+ */
+export function passwordResetEmail(opts: {
+  fullname: string
+  resetUrl: string
+  expiresMinutes: number
+}): { subject: string; html: string } {
+  const body = `
+    <p style="font-size:14px;color:#374151;margin:0 0 14px">Hola ${esc(opts.fullname)},</p>
+    <p style="font-size:14px;color:#374151;margin:0 0 14px">
+      Recibimos una solicitud para restablecer la contraseña de tu cuenta en ComandPOS.
+      Haz clic en el botón para elegir una nueva contraseña.
+    </p>
+    ${statusBanner('info', `Este enlace vence en <strong>${opts.expiresMinutes} minutos</strong> y solo puede usarse una vez.`)}
+    <p style="font-size:12px;color:#9aa4b2;margin:18px 0 0;word-break:break-all">
+      Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
+      <a href="${opts.resetUrl}" style="color:#7048e8">${esc(opts.resetUrl)}</a>
+    </p>
+    <p style="font-size:12px;color:#9aa4b2;margin:14px 0 0">
+      Si no solicitaste este cambio, puedes ignorar este correo — tu contraseña actual sigue siendo válida.
+    </p>`
+  return {
+    subject: 'Restablece tu contraseña — ComandPOS',
+    html: layout({
+      kind: 'security',
+      title: 'Restablece tu contraseña',
+      bodyHtml: body,
+      cta: { url: opts.resetUrl, label: 'Restablecer contraseña' },
+      footerNote: 'Correo de seguridad de ComandPOS. Nunca compartas este enlace con nadie.',
+    }),
   }
 }
 

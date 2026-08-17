@@ -482,10 +482,45 @@ async function runBusinessWatchers(): Promise<{ scanned: number; enqueued: numbe
             [locScope ? sub.location_id : sub.business_unit_id, threshold],
           )
           if (rows.length) {
+            // Detalle línea por línea: qué se botó, cuánto, por qué y quién.
+            const detail = await query<any>(
+              `SELECT w.waste_number, w.total_cost AS header_cost,
+                      to_char((w.created_at AT TIME ZONE '${TZ}'), 'HH12:MI AM') AS at_time,
+                      u.use_fullname AS created_by,
+                      it.name AS item_name, wd.quantity, un.abbreviation AS unit,
+                      wd.total_cost AS line_cost,
+                      wt.name AS waste_type, wc.name AS waste_cause, wd.reason
+                 FROM inventory.waste_headers w
+                 JOIN inventory.waste_details wd ON wd.waste_header_id = w.id
+                 JOIN inventory.items it ON it.id = wd.item_id
+                 LEFT JOIN inventory.units un ON un.id = wd.unit_id
+                 JOIN inventory.waste_types wt ON wt.id = wd.waste_type_id
+                 LEFT JOIN inventory.waste_causes wc ON wc.id = wd.waste_cause_id
+                 LEFT JOIN common.users u ON u.use_id = w.registered_by
+                WHERE w.cancelled_at IS NULL AND w.status_id <> 4
+                  AND w.waste_date::date = (now() AT TIME ZONE '${TZ}')::date
+                  AND ${locScope ? 'w.location_id = $1' : 'w.business_unit_id = $1'}
+                ORDER BY wd.total_cost DESC NULLS LAST
+                LIMIT 40`,
+              [locScope ? sub.location_id : sub.business_unit_id],
+            )
+            const items = detail.map((d: any) => ({
+              waste_number: d.waste_number,
+              at_time: d.at_time,
+              created_by: d.created_by,
+              item_name: d.item_name,
+              quantity: Number(d.quantity),
+              unit: d.unit,
+              line_cost: Number(d.line_cost),
+              waste_type: d.waste_type,
+              waste_cause: d.waste_cause,
+              reason: d.reason,
+            }))
             const ok = await enqueueOutbox(sub, sub.location_id, {
               amount: Number(rows[0].total),
               wastes: rows[0].wastes,
               threshold,
+              items,
               _title: `Merma alta del día: RD$${Number(rows[0].total).toFixed(2)} en ${rows[0].wastes} registro(s)`,
             }, `WASTE_HIGH:loc${sub.location_id ?? 'bu' + sub.business_unit_id}:${rows[0].local_date}`)
             if (ok) enqueued++
@@ -509,7 +544,7 @@ async function runBusinessWatchers(): Promise<{ scanned: number; enqueued: numbe
                FROM finances.invoices i
                JOIN finances.entities e ON e.id = i.entity_id
               WHERE ${locScope ? 'i.location_id = $1' : 'i.business_unit_id = $1'}
-                AND i.status_id = 1 AND i.invoice_category_id = 2 AND i.invoice_type_id <> 1
+                AND i.status_id = 1 AND i.invoice_category_id = 2 AND i.invoice_type_id = 2
                 AND (CURRENT_DATE - i.expire_at) BETWEEN 31 AND 33
                 AND (i.total_amount * i.currency_rate) - COALESCE((
                       SELECT SUM(ipd.payment_amount * ip.currency_rate)
@@ -554,6 +589,18 @@ async function runBusinessWatchers(): Promise<{ scanned: number; enqueued: numbe
           )
           if (rows.length) {
             const r = rows[0]
+            // Desglose por ACCIÓN (para qué se intentaba el PIN) y por SUCURSAL.
+            const byCtx = await query<any>(
+              `SELECT COALESCE(NULLIF(TRIM(p.context), ''), 'No especificada') AS ctx,
+                      l.description_long AS loc, COUNT(*)::int AS n
+                 FROM notifications.pin_failure_log p
+                 LEFT JOIN human_resource.locations l ON l.id = p.location_id
+                WHERE p.created_at >= now() - interval '15 minutes'
+                  AND ${locScope ? 'p.location_id = $1' : 'l.business_unit_id = $1'}
+                GROUP BY 1, 2 ORDER BY n DESC`,
+              [locScope ? sub.location_id : sub.business_unit_id],
+            )
+            const actions = byCtx.map((c: any) => ({ action: c.ctx, location: c.loc, count: Number(c.n) }))
             const ok = await enqueueOutbox(sub, sub.location_id, {
               attempts: r.attempts,
               wrong_pin: r.wrong_pin,
@@ -561,6 +608,7 @@ async function runBusinessWatchers(): Promise<{ scanned: number; enqueued: numbe
               no_access: r.no_access,
               window_minutes: 15,
               threshold: Math.max(1, threshold),
+              actions,
               _title: `🔒 ${r.attempts} intentos fallidos de PIN de supervisor en 15 min`,
             }, `PIN_FAILED_ATTEMPTS:loc${sub.location_id ?? 'bu' + sub.business_unit_id}:w${r.bucket}`)
             if (ok) enqueued++
