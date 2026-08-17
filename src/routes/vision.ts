@@ -90,7 +90,8 @@ async function resolveImage(file: ImageSource | null, imageUrl?: string): Promis
 
 const NOTE_SYSTEM = `Eres un redactor experto de fichas de producto para un sistema POS dominicano que atiende
 restaurantes, colmados y comercios retail (repuestos, electrónica, ferretería, bebidas, etc.).
-A partir de la FOTO del producto escribes la NOTA DE CATÁLOGO definitiva, adaptando el tono al rubro:
+A partir de la FOTO del producto (o SOLO del nombre, si no se adjunta foto) escribes la NOTA DE
+CATÁLOGO definitiva, adaptando el tono al rubro:
 - Comida/bebida preparada → apetitoso y profesional: qué es, ingredientes/componentes visibles, presentación, porción aparente.
 - Producto empacado/retail/repuesto → ficha técnica comercial: qué es, marca y modelo visibles, características, uso típico y compatibilidades SOLO si son visibles o notorias de esa marca/modelo.
 
@@ -105,6 +106,8 @@ REGLAS DE ORO:
      aplicación típica), marca image_matches_context=false y explica el descuadre SOLO en "observation"
      (ej.: "La foto parece un control inalámbrico, no el filtro Bosch del nombre — verifica la foto").
    - Sin nombre dado → describe el producto que muestra la foto.
+   - Sin foto adjunta → redacta la nota del artículo del nombre con tu conocimiento de esa marca/modelo
+     (image_matches_context=true, observation=null).
 3. No inventes especificaciones dudosas (medidas exactas, compatibilidades no confirmadas) ni precios/promos.
 4. Español, 2 a 4 oraciones, máximo ~350 caracteres, sin emojis.`
 
@@ -115,8 +118,13 @@ const NOTE_SCHEMA = {
     note: { type: 'string', description: 'Nota de catálogo lista para publicar (describe el producto de la foto).' },
     image_matches_context: { type: 'boolean', description: 'true si la foto corresponde al nombre/categoría dados (o si no se dio contexto).' },
     observation: { type: ['string', 'null'], description: 'Solo si hay descuadre foto↔nombre u otro problema: explicación corta para el usuario. Si todo bien, null.' },
+    allergens: {
+      type: 'array',
+      items: { type: 'string', enum: ['gluten', 'lácteos', 'huevo', 'soya', 'maní', 'frutos secos', 'mariscos', 'pescado', 'sésamo'] },
+      description: 'Alérgenos presentes o muy probables SOLO si es comida/bebida preparada. Vacío para productos no comestibles o si no hay evidencia.',
+    },
   },
-  required: ['note', 'image_matches_context', 'observation'],
+  required: ['note', 'image_matches_context', 'observation', 'allergens'],
 } as const
 
 const ENHANCE_PROMPT = `Convierte esta foto en una imagen profesional de catálogo de restaurante:
@@ -143,23 +151,30 @@ export function visionRoutes(app: FastifyInstance) {
       const { businessUnitId, config } = await resolveTenant(parsed.data, req.actor)
       if (!config) return { success: true, enabled: false, message: 'Comandi no está activado para esta empresa.' }
 
-      const image = await resolveImage(file, parsed.data.image_url)
+      // Imagen OPCIONAL: sin foto (bulk de items sin imagen) la nota sale del nombre.
+      const hasImage = !!(file || parsed.data.image_url)
+      if (!hasImage && !parsed.data.product_name) {
+        return reply.code(400).send({ success: false, message: 'Se requiere la imagen o al menos el nombre del producto.' })
+      }
+      const image = hasImage ? await resolveImage(file, parsed.data.image_url) : null
 
       const context: string[] = []
       if (parsed.data.product_name) context.push(`Nombre del producto según el usuario: ${parsed.data.product_name}`)
       if (parsed.data.category) context.push(`Categoría según el usuario: ${parsed.data.category}`)
       if (parsed.data.current_note) context.push(`Nota actual (mejórala si aporta): ${parsed.data.current_note}`)
-      const user = `${context.length ? context.join('\n') + '\n\n' : ''}Escribe la nota de catálogo del producto que aparece en la foto.`
+      const user = `${context.length ? context.join('\n') + '\n\n' : ''}${image
+        ? 'Escribe la nota de catálogo del producto que aparece en la foto.'
+        : 'No hay foto: escribe la nota de catálogo del producto a partir del nombre.'}`
 
       const userId = req.actor?.type === 'user' ? req.actor.userId : null
-      const result = await generateJSON<{ note: string; image_matches_context: boolean; observation: string | null }>({
+      const result = await generateJSON<{ note: string; image_matches_context: boolean; observation: string | null; allergens: string[] }>({
         config,
         system: NOTE_SYSTEM,
         user,
         schema: NOTE_SCHEMA,
         schemaName: 'product_catalogue_note',
         maxTokens: 700,
-        image: { base64: image.buffer.toString('base64'), mimeType: image.mimeType },
+        ...(image ? { image: { base64: image.buffer.toString('base64'), mimeType: image.mimeType } } : {}),
         usageMeta: { businessUnitId, userId, endpoint: 'vision-note' },
       })
 
@@ -173,6 +188,7 @@ export function visionRoutes(app: FastifyInstance) {
         note,
         image_matches_context: result.image_matches_context !== false,
         observation: result.observation || null,
+        allergens: Array.isArray(result.allergens) ? result.allergens : [],
       }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })

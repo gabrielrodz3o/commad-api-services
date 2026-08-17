@@ -11,6 +11,7 @@ import { agentRoutes } from './routes/agent.js'
 import { actionRoutes } from './routes/action.js'
 import { voiceRoutes } from './routes/voice.js'
 import { visionRoutes } from './routes/vision.js'
+import { catalogRoutes } from './routes/catalog.js'
 import { usageRoutes } from './routes/usage.js'
 import { watchdogRoutes } from './routes/watchdog.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
@@ -29,7 +30,7 @@ export async function buildApp() {
   await app.register(rateLimit, { max: 60, timeWindow: '1 minute', allowList: (req) => req.actor?.type === 'service', keyGenerator: (req) => req.actor?.type === 'user' ? `u:${req.actor.userId}` : req.ip, errorResponseBuilder: () => ({ success: false, code: 'RATE_LIMITED', message: 'Demasiadas solicitudes.' }) })
   app.setErrorHandler((error, req, reply) => { const err = error as any; const status = Math.min(599, Math.max(400, Number(err.statusCode) || 500)); if (status >= 500) req.log.error({ err }, 'request failed'); reply.code(status).send({ success: false, code: err.code || 'REQUEST_FAILED', message: status >= 500 ? 'Error interno del servidor' : String(err.message || 'Solicitud inválida'), request_id: req.id }) })
   app.addHook('onSend', async (req, reply, payload) => { reply.header('x-request-id', req.id); return payload })
-  healthRoutes(app); askRoutes(app); insightsRoutes(app); agentRoutes(app); actionRoutes(app); voiceRoutes(app); visionRoutes(app); usageRoutes(app); watchdogRoutes(app); knowledgeRoutes(app); pushRoutes(app); telegramRoutes(app); notificationRoutes(app); authRoutes(app); mobileRoutes(app)
+  healthRoutes(app); askRoutes(app); insightsRoutes(app); agentRoutes(app); actionRoutes(app); voiceRoutes(app); visionRoutes(app); catalogRoutes(app); usageRoutes(app); watchdogRoutes(app); knowledgeRoutes(app); pushRoutes(app); telegramRoutes(app); notificationRoutes(app); authRoutes(app); mobileRoutes(app)
   app.get('/', async () => ({ service: 'command-api-services', status: 'ok', environment: env.APP_ENV }))
   return app
 }
