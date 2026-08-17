@@ -21,6 +21,8 @@ export interface TextOpts {
   system: string
   user: string
   maxTokens?: number
+  // Imagen opcional (visión multimodal): base64 SIN prefijo data:.
+  image?: { base64: string; mimeType: string }
   // Si viene, se registra el consumo en comandi.usage_log (costo por empresa).
   usageMeta?: UsageMeta
 }
@@ -46,6 +48,14 @@ export async function generateText(opts: TextOpts): Promise<string> {
       const client = new OpenAI({ apiKey: config.apiKey })
       const isGpt5 = config.model.startsWith('gpt-5')
       const supportsTemp = config.model.startsWith('gpt-4o')
+      const userContent: any[] = [{ type: 'input_text', text: user }]
+      if (opts.image) {
+        userContent.push({
+          type: 'input_image' as const,
+          image_url: `data:${opts.image.mimeType};base64,${opts.image.base64}`,
+          detail: 'high' as const,
+        })
+      }
       const res = await client.responses.create({
         model: config.model,
         ...(supportsTemp ? { temperature: 0.3 } : {}),
@@ -53,18 +63,24 @@ export async function generateText(opts: TextOpts): Promise<string> {
         max_output_tokens: maxTokens,
         input: [
           { role: 'system', content: [{ type: 'input_text', text: system }] },
-          { role: 'user', content: [{ type: 'input_text', text: user }] },
+          { role: 'user', content: userContent },
         ],
       })
       record(opts, res.usage)
       return res.output_text || ''
     }
     const client = new Anthropic({ apiKey: config.apiKey })
+    const anthropicContent: any = opts.image
+      ? [
+          { type: 'image', source: { type: 'base64', media_type: opts.image.mimeType, data: opts.image.base64 } },
+          { type: 'text', text: user },
+        ]
+      : user
     const msg = await client.messages.create({
       model: config.model,
       max_tokens: maxTokens,
       system,
-      messages: [{ role: 'user', content: user }],
+      messages: [{ role: 'user', content: anthropicContent }],
     })
     record(opts, msg.usage)
     return msg.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
