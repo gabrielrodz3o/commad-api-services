@@ -107,7 +107,15 @@ export async function generateJSON<T = any>(opts: JsonOpts): Promise<T> {
         text: { format: { type: 'json_schema', name: schemaName, strict: true, schema: schema as any } },
         input: [
           { role: 'system', content: [{ type: 'input_text', text: system }] },
-          { role: 'user', content: [{ type: 'input_text', text: user }] },
+          {
+            role: 'user',
+            content: opts.image
+              ? [
+                  { type: 'input_text', text: user },
+                  { type: 'input_image' as const, image_url: `data:${opts.image.mimeType};base64,${opts.image.base64}`, detail: 'high' as const },
+                ]
+              : [{ type: 'input_text', text: user }],
+          },
         ],
       })
       const raw = res.output_text
@@ -120,7 +128,15 @@ export async function generateJSON<T = any>(opts: JsonOpts): Promise<T> {
       model: config.model,
       max_tokens: maxTokens,
       system,
-      messages: [{ role: 'user', content: user }],
+      messages: [{
+        role: 'user',
+        content: opts.image
+          ? [
+              { type: 'image', source: { type: 'base64', media_type: opts.image.mimeType as any, data: opts.image.base64 } },
+              { type: 'text', text: user },
+            ]
+          : user,
+      }],
       tools: [{ name: 'emit_result', description: 'Devuelve el resultado estructurado requerido.', input_schema: schema as any }],
       tool_choice: { type: 'tool', name: 'emit_result' },
     })

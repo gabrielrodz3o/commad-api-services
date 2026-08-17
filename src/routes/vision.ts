@@ -13,7 +13,7 @@ import { z } from 'zod'
 import { locationFields, resolveTenant } from '../lib/resolve.js'
 import { TenantError } from '../db/tenant.js'
 import { env } from '../config/env.js'
-import { generateText, LLMError } from '../llm/provider.js'
+import { generateJSON, LLMError } from '../llm/provider.js'
 import { addUsage, type AIUsage } from '../llm/usage.js'
 import { logUsage } from '../db/usage-log.js'
 
@@ -81,11 +81,31 @@ async function resolveImage(file: ImageSource | null, imageUrl?: string): Promis
   return { buffer, mimeType, filename }
 }
 
-const NOTE_SYSTEM = `Eres el redactor gastronómico de un restaurante dominicano. A partir de la FOTO de un producto
-escribes su nota de catálogo/ficha para el sistema POS: qué es, ingredientes o componentes visibles,
-presentación y porción aparente. Tono apetitoso pero profesional, en español, 2 a 4 oraciones,
-máximo ~350 caracteres. SOLO describe lo que se ve o lo que el contexto confirma — no inventes
-ingredientes ocultos, precios ni promociones. Devuelve ÚNICAMENTE el texto de la nota, sin comillas ni títulos.`
+const NOTE_SYSTEM = `Eres un redactor experto de fichas de producto para un sistema POS dominicano que atiende
+restaurantes, colmados y comercios retail (repuestos, electrónica, ferretería, bebidas, etc.).
+A partir de la FOTO del producto escribes la NOTA DE CATÁLOGO definitiva, adaptando el tono al rubro:
+- Comida/bebida preparada → apetitoso y profesional: qué es, ingredientes/componentes visibles, presentación, porción aparente.
+- Producto empacado/retail/repuesto → ficha técnica comercial: qué es, marca y modelo visibles, características, uso típico y compatibilidades SOLO si son visibles o notorias de esa marca/modelo.
+
+REGLAS DE ORO:
+1. "note" es SIEMPRE una nota de catálogo lista para publicar: NUNCA un descargo, disculpa ni comentario
+   sobre la imagen ("la imagen muestra...", "no se aprecia...", "no coincide..." están PROHIBIDOS en note).
+2. La FOTO manda: la nota describe el producto que realmente aparece en la foto.
+3. Si el nombre/categoría dados NO corresponden a lo que muestra la foto, IGUAL escribes la nota del
+   producto de la foto, marcas image_matches_context=false y explicas el descuadre en "observation"
+   (ej.: "La foto muestra un control inalámbrico, no el filtro Bosch del nombre — verifica la foto o el nombre").
+4. Español, 2 a 4 oraciones, máximo ~350 caracteres, sin precios, promociones ni emojis.`
+
+const NOTE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    note: { type: 'string', description: 'Nota de catálogo lista para publicar (describe el producto de la foto).' },
+    image_matches_context: { type: 'boolean', description: 'true si la foto corresponde al nombre/categoría dados (o si no se dio contexto).' },
+    observation: { type: ['string', 'null'], description: 'Solo si hay descuadre foto↔nombre u otro problema: explicación corta para el usuario. Si todo bien, null.' },
+  },
+  required: ['note', 'image_matches_context', 'observation'],
+} as const
 
 const ENHANCE_PROMPT = `Convierte esta foto en una imagen profesional de catálogo de restaurante:
 recorta y centra el producto, ELIMINA por completo el fondo original y colócalo sobre un fondo blanco
@@ -114,23 +134,34 @@ export function visionRoutes(app: FastifyInstance) {
       const image = await resolveImage(file, parsed.data.image_url)
 
       const context: string[] = []
-      if (parsed.data.product_name) context.push(`Nombre del producto: ${parsed.data.product_name}`)
-      if (parsed.data.category) context.push(`Categoría: ${parsed.data.category}`)
+      if (parsed.data.product_name) context.push(`Nombre del producto según el usuario: ${parsed.data.product_name}`)
+      if (parsed.data.category) context.push(`Categoría según el usuario: ${parsed.data.category}`)
       if (parsed.data.current_note) context.push(`Nota actual (mejórala si aporta): ${parsed.data.current_note}`)
-      const user = `${context.length ? context.join('\n') + '\n\n' : ''}Escribe la nota de catálogo de este producto a partir de la foto.`
+      const user = `${context.length ? context.join('\n') + '\n\n' : ''}Escribe la nota de catálogo del producto que aparece en la foto.`
 
       const userId = req.actor?.type === 'user' ? req.actor.userId : null
-      const note = (await generateText({
+      const result = await generateJSON<{ note: string; image_matches_context: boolean; observation: string | null }>({
         config,
         system: NOTE_SYSTEM,
         user,
-        maxTokens: 500,
+        schema: NOTE_SCHEMA,
+        schemaName: 'product_catalogue_note',
+        maxTokens: 700,
         image: { base64: image.buffer.toString('base64'), mimeType: image.mimeType },
         usageMeta: { businessUnitId, userId, endpoint: 'vision-note' },
-      })).trim()
+      })
 
+      const note = (result?.note || '').trim()
       if (!note) return reply.code(502).send({ success: false, message: 'El modelo no devolvió la nota.' })
-      return { success: true, enabled: true, provider: config.provider, model: config.model, note }
+      return {
+        success: true,
+        enabled: true,
+        provider: config.provider,
+        model: config.model,
+        note,
+        image_matches_context: result.image_matches_context !== false,
+        observation: result.observation || null,
+      }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
       if (e instanceof LLMError) return reply.code(502).send({ success: false, message: e.message })
