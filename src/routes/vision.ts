@@ -90,11 +90,16 @@ A partir de la FOTO del producto escribes la NOTA DE CATÁLOGO definitiva, adapt
 REGLAS DE ORO:
 1. "note" es SIEMPRE una nota de catálogo lista para publicar: NUNCA un descargo, disculpa ni comentario
    sobre la imagen ("la imagen muestra...", "no se aprecia...", "no coincide..." están PROHIBIDOS en note).
-2. La FOTO manda: la nota describe el producto que realmente aparece en la foto.
-3. Si el nombre/categoría dados NO corresponden a lo que muestra la foto, IGUAL escribes la nota del
-   producto de la foto, marcas image_matches_context=false y explicas el descuadre en "observation"
-   (ej.: "La foto muestra un control inalámbrico, no el filtro Bosch del nombre — verifica la foto o el nombre").
-4. Español, 2 a 4 oraciones, máximo ~350 caracteres, sin precios, promociones ni emojis.`
+   El cliente final la leerá junto al producto — debe venderlo, no auditar la foto.
+2. EL NOMBRE DEL PRODUCTO MANDA: la nota es del artículo indicado por el usuario.
+   - Si la foto corresponde al nombre → úsala para enriquecer la nota (presentación, colores, detalles visibles).
+   - Si la foto NO corresponde al nombre → IGNORA la foto y escribe la nota del artículo del nombre usando tu
+     conocimiento real de esa marca/modelo (ej. "Bosch FC06199" = filtro de combustible: función, calidad OE,
+     aplicación típica), marca image_matches_context=false y explica el descuadre SOLO en "observation"
+     (ej.: "La foto parece un control inalámbrico, no el filtro Bosch del nombre — verifica la foto").
+   - Sin nombre dado → describe el producto que muestra la foto.
+3. No inventes especificaciones dudosas (medidas exactas, compatibilidades no confirmadas) ni precios/promos.
+4. Español, 2 a 4 oraciones, máximo ~350 caracteres, sin emojis.`
 
 const NOTE_SCHEMA = {
   type: 'object',
