@@ -1,3 +1,9 @@
+## 2026-08-17 (tarde) — Inteligencia de catálogo (c205f33)
+
+- `src/routes/catalog.ts`: `/comandi/catalog/classify` (categoría sugerida de la lista real del front, blindaje id válido) y `/comandi/catalog/suggest-recipe` (receta estándar: ingredientes genéricos + cantidades 1 unidad; el core mapea a inventario con pg_trgm).
+- `vision.ts`: nota SIN imagen (bulk de items sin foto) + `allergens[]` en la respuesta.
+- usage_log: catalog-classify / catalog-recipe. Probado con BU16 gpt-4o (mojito→COCTELES 0.95, club sandwich→7 ingredientes, tres leches→lácteos/huevo/gluten).
+
 ## 2026-08-17 — Visión de productos: nota desde la foto + mejora de imagen para catálogo
 
 - `src/llm/provider.ts`: `TextOpts.image` opcional (base64+mime) → visión multimodal en `generateText` (OpenAI Responses `input_image` detail high / Anthropic bloque `image`).
