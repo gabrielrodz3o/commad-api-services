@@ -33,6 +33,13 @@ const EnhancePayload = z.object({
   image_url: z.string().url().optional(),
 })
 
+const GeneratePayload = z.object({
+  ...locationFields,
+  product_name: z.string().min(2).max(200),
+  category: z.string().max(200).optional(),
+  note: z.string().max(2000).optional(),
+})
+
 interface ImageSource {
   buffer: Buffer
   mimeType: string
@@ -223,6 +230,56 @@ export function visionRoutes(app: FastifyInstance) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
       req.log.error(e)
       const msg = e?.status === 400 ? `OpenAI rechazó la imagen: ${e?.message || 'imagen inválida'}` : 'Error mejorando la imagen'
+      return reply.code(e?.status === 400 ? 422 : 500).send({ success: false, message: msg })
+    }
+  })
+
+  // ── Generar imagen desde CERO (producto sin foto): nombre + nota → packshot ──
+  app.post('/comandi/vision/generate-image', async (req, reply) => {
+    const parsed = GeneratePayload.safeParse(req.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ success: false, message: 'Datos inválidos', errors: parsed.error.flatten() })
+
+    try {
+      const { businessUnitId, config } = await resolveTenant(parsed.data, req.actor)
+      if (!config) return { success: true, enabled: false, message: 'Comandi no está activado para esta empresa.' }
+
+      const oaiKey = config.provider === 'openai' ? config.apiKey : (env.OPENAI_API_KEY || '')
+      if (!oaiKey) return reply.code(503).send({ success: false, message: 'Generación de imagen no disponible (falta llave de OpenAI).' })
+
+      const parts = [`Producto: ${parsed.data.product_name}.`]
+      if (parsed.data.category) parts.push(`Categoría: ${parsed.data.category}.`)
+      if (parsed.data.note) parts.push(`Descripción: ${parsed.data.note}.`)
+      const prompt = `Fotografía profesional de producto para el catálogo de un punto de venta.
+${parts.join('\n')}
+Producto centrado sobre fondo blanco puro de estudio con sombra suave y natural, iluminación
+profesional de catálogo, colores fieles y realistas.
+Si es un plato o comida preparada: preséntalo apetitoso, emplatado como lo serviría un restaurante dominicano.
+Si es un producto empacado, repuesto o artículo retail: represéntalo de forma realista y genérica, sin inventar
+logos ni empaques de marcas que no estén en el nombre.
+Sin texto superpuesto, sin marcas de agua, una sola unidad del producto.`
+
+      const client = new OpenAI({ apiKey: oaiKey })
+      const res: any = await client.images.generate({
+        model: 'gpt-image-1',
+        prompt,
+        size: '1024x1024',
+        quality: 'medium',
+        n: 1,
+      })
+
+      const b64 = res?.data?.[0]?.b64_json
+      if (!b64) return reply.code(502).send({ success: false, message: 'El modelo no devolvió la imagen.' })
+
+      const userId = req.actor?.type === 'user' ? req.actor.userId : null
+      const usage: AIUsage = { provider: 'openai', model: 'gpt-image-1', tokensIn: 0, tokensOut: 0 }
+      addUsage(usage, res?.usage)
+      logUsage({ businessUnitId, userId, endpoint: 'vision-generate' }, usage)
+
+      return { success: true, enabled: true, model: 'gpt-image-1', image_base64: b64, mime_type: 'image/png' }
+    } catch (e: any) {
+      if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
+      req.log.error(e)
+      const msg = e?.status === 400 ? `OpenAI rechazó la solicitud: ${e?.message || 'prompt inválido'}` : 'Error generando la imagen'
       return reply.code(e?.status === 400 ? 422 : 500).send({ success: false, message: msg })
     }
   })
