@@ -217,7 +217,7 @@ export function hrRoutes(app: FastifyInstance) {
       return { success: true, enabled: true, letter: (letter || '').trim() }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
-      if (e instanceof LLMError) return reply.code(502).send({ success: false, message: e.message })
+      if (e instanceof LLMError) return reply.code(424).send({ success: false, message: e.message }) // 424: Cloudflare enmascara los 502 del origen con su propia página
       req.log.error(e)
       return reply.code(500).send({ success: false, message: 'Error redactando la carta' })
     }
@@ -266,7 +266,7 @@ export function hrRoutes(app: FastifyInstance) {
       }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
-      if (e instanceof LLMError) return reply.code(502).send({ success: false, message: e.message })
+      if (e instanceof LLMError) return reply.code(424).send({ success: false, message: e.message }) // 424: Cloudflare enmascara los 502 del origen con su propia página
       req.log.error(e)
       return reply.code(500).send({ success: false, message: 'Error interpretando la instrucción' })
     }
@@ -292,7 +292,7 @@ export function hrRoutes(app: FastifyInstance) {
       return { success: true, enabled: true, receipt: (receipt || '').trim() }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
-      if (e instanceof LLMError) return reply.code(502).send({ success: false, message: e.message })
+      if (e instanceof LLMError) return reply.code(424).send({ success: false, message: e.message }) // 424: Cloudflare enmascara los 502 del origen con su propia página
       req.log.error(e)
       return reply.code(500).send({ success: false, message: 'Error redactando el recibo de descargo' })
     }
@@ -318,7 +318,7 @@ export function hrRoutes(app: FastifyInstance) {
       return { success: true, enabled: true, explanation: (explanation || '').trim() }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
-      if (e instanceof LLMError) return reply.code(502).send({ success: false, message: e.message })
+      if (e instanceof LLMError) return reply.code(424).send({ success: false, message: e.message }) // 424: Cloudflare enmascara los 502 del origen con su propia página
       req.log.error(e)
       return reply.code(500).send({ success: false, message: 'Error explicando la liquidación' })
     }
