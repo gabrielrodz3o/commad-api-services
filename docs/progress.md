@@ -1,3 +1,8 @@
+## 2026-08-18 — Rutas de RRHH (acciones de empleo + liquidación)
+
+- `src/routes/hr.ts` (nuevo, registrado en app.ts): `POST /comandi/hr/action-letter` (carta formal de acción de personal), `POST /comandi/hr/action-propose` (NL → acción estructurada con blindaje de ids contra las listas enviadas; propose→confirm), `POST /comandi/hr/explain-liquidation` (explicación legal Arts. 76/80/88/96/177/219-222) y `POST /comandi/hr/discharge-receipt` (recibo de descargo Art. 669 con total en letras).
+- El CORE arma el contexto (RBAC empleados + datos reales) y mapea nombres→ids con pg_trgm; aquí solo tenant BYO-key + LLM + usage_log (endpoints: hr-action-letter/hr-action-propose/hr-explain-liquidation/hr-discharge-receipt).
+- Probado en local con BU 3 (gpt-5.5). Consumidores en el core: server/api/hr/employees/[id]/ai-*.post.ts. FALTA deploy PROD.
 ## 2026-08-17 (tarde) — Inteligencia de catálogo (c205f33)
 
 - `src/routes/catalog.ts`: `/comandi/catalog/classify` (categoría sugerida de la lista real del front, blindaje id válido) y `/comandi/catalog/suggest-recipe` (receta estándar: ingredientes genéricos + cantidades 1 unidad; el core mapea a inventario con pg_trgm).
