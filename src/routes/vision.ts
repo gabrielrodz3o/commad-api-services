@@ -78,6 +78,10 @@ async function resolveImage(file: ImageSource | null, imageUrl?: string): Promis
   if (!imageUrl) throw new TenantError('Falta la imagen (archivo o image_url).', 400)
   if (!/^https?:\/\//i.test(imageUrl)) throw new TenantError('image_url inválida.', 400)
   const res = await fetch(imageUrl)
+  // Spaces responde 403 también para objetos INEXISTENTES (URL rota en la BD).
+  if (res.status === 403 || res.status === 404) {
+    throw new TenantError('La imagen guardada de este producto ya no existe en el almacenamiento — vuelve a subirla o quítala y usa "Generar imagen con IA".', 422)
+  }
   if (!res.ok) throw new TenantError(`No se pudo descargar la imagen (${res.status}).`, 422)
   const contentType = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim()
   const mimeType = ALLOWED_MIME.has(contentType) ? contentType : 'image/jpeg'
