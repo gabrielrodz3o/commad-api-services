@@ -233,8 +233,10 @@ cada columna. Reglas:
 · "um", "u/m", "unidad", "medida", "presentación" → unidad. "existencia", "cant", "stock" → stock.
 · "familia", "grupo", "depto", "línea" → categoria_padre; "subcategoría", "sub" → categoria.
 · "ean", "upc", "cod. barra" → barcode; "plu", "balanza" → plu; "ref", "sku", "código interno" → interno.
-· Columna de IMPUESTO → itbis: "itbis", "impuesto", "imp", "tax", "iva", "tasa", "% imp", "gravado",
-  "exento", "e/g". No la confundas con el precio.
+· Columna de IMPUESTO → itbis SOLO si es una TASA o una marca (18, 18%, 0.18, E/G, exento, gravado).
+  Si la columna trae el MONTO del impuesto por fila (ej. 32.03 junto a un precio de 177.97), NO es itbis:
+  déjala en null y usa eso como señal de que el precio es la base (price_includes_tax=false).
+  No confundas ninguna de las dos con el precio.
 · "proveedor", "suplidor", "suministrador", "vendor" → proveedor (el core lo cruza con sus proveedores).
 · Cualquier columna que no sirva para el catálogo → field=null. Nunca inventes un campo que no esté en la lista.
 Devuelve TODAS las columnas que te di, en el mismo orden, usando el encabezado EXACTO en source.
