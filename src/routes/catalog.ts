@@ -262,9 +262,11 @@ const CLASSIFY_BULK_SCHEMA = {
           categoria: { type: 'string', description: 'Subcategoría en MAYÚSCULAS (o GENERAL si no hay una clara).' },
           pesable: { type: 'boolean', description: 'true si se vende por peso en balanza (queso, carne a granel).' },
           desechable: { type: 'boolean', description: 'true si es empaque/desechable (vaso, servilleta, funda).' },
+          contenido: { type: ['number', 'null'], description: 'Contenido de la presentación EXPRESADO EN LA UNIDAD QUE ELEGISTE, solo si el texto lo dice explícito: "VASO FOAM PQT 50" con unidad PAQUETE → 50; "CERVEZA CAJA 24" con unidad CAJA/CAJON → 24. Si la unidad ya es la de venta suelta (UNIDAD, LIBRA) o el contenido no está en el texto → null. NUNCA lo inventes.' },
+          merma: { type: ['number', 'null'], description: 'Solo para INSUMO que pierde peso al limpiarse/pelarse: % de merma estándar (plátano ~30, yuca ~25, pechuga ~5). Si no aplica o no estás seguro → null.' },
           confianza: { type: 'number', description: 'Confianza 0 a 1.' },
         },
-        required: ['i', 'tipo', 'unidad', 'categoria_padre', 'categoria', 'pesable', 'desechable', 'confianza'],
+        required: ['i', 'tipo', 'unidad', 'categoria_padre', 'categoria', 'pesable', 'desechable', 'contenido', 'merma', 'confianza'],
       },
     },
   },
@@ -289,6 +291,9 @@ Para CADA fila decides:
 3) categoria_padre / categoria: jerarquía de máximo 2 niveles, en MAYÚSCULAS. Reutiliza las categorías
    existentes que te doy cuando encajen (mismo nombre exacto); si no, propone nombres cortos de negocio.
    Los INSUMOS van bajo categorías de insumo (ej. "INSUMOS" > "LACTEOS", "EMPAQUES" > "DESECHABLES").
+4) contenido: SOLO si el nombre o la columna de presentación dice cuánto trae el empaque y la unidad
+   elegida es de empaque (PAQUETE, CAJA/CAJON, SACO, FARDO, DOCENA, BULTOS). Si no, null.
+5) merma: solo insumos que se pelan o limpian; si dudas, null.
 No inventes filas ni cambies el índice i. Responde una entrada por cada fila recibida.`
 
 const RecipesBulkBody = z.object({
@@ -305,6 +310,10 @@ const RecipesBulkBody = z.object({
     k: z.coerce.number().int().min(0),
     name: z.string().min(1).max(300),
     unit: z.string().max(60).optional(),
+    // Contenido de la presentación (items.unit_quantity): un PAQUETE de 50 vasos
+    // trae content=50 y el costeo divide el costo entre 50 → la cantidad de la
+    // receta se expresa en unidades del CONTENIDO, no en empaques.
+    content: z.coerce.number().positive().optional(),
     origin: z.enum(['csv', 'catalogo']).optional(),
   })).max(400).optional(),
   units: z.array(z.string().min(1).max(60)).min(1).max(120),
@@ -354,6 +363,8 @@ Reglas:
   (para "PIZZA PEPPERONI" usa la masa/queso/pepperoni de la lista, no "ingredientes varios").
 · Cantidades realistas de food-cost en la unidad BASE del insumo elegido (si el insumo está en LIBRA,
   da la cantidad en libras: 0.25, no 113 gramos). Nunca "al gusto", nunca 0.
+· Si el insumo dice "de N unidades sueltas" (viene por empaque), la cantidad va en UNIDADES SUELTAS:
+  un vaso de un PAQUETE de 50 vasos es 1, NO 0.02. Nunca dividas por el contenido del empaque.
 · Incluye desechables (envase, vaso, servilleta) solo si el producto claramente los usa y están en la lista.
 · Si el producto NO es preparable (un refresco embotellado, un repuesto), devuelve ingredients=[] y dilo en notes.
 · No repitas el mismo insumo dos veces en la misma receta. Máximo 12 líneas por receta.`
@@ -454,6 +465,9 @@ export function catalogImportRoutes(app: FastifyInstance) {
             categoria: String(r.categoria ?? '').trim().toUpperCase() || null,
             pesable: !!r.pesable,
             desechable: !!r.desechable,
+            // contenido/merma: rangos sanos o null (el core no debe recibir basura).
+            contenido: Number(r.contenido) > 0 && Number(r.contenido) <= 100000 ? Number(r.contenido) : null,
+            merma: Number(r.merma) > 0 && Number(r.merma) < 90 ? Number(r.merma) : null,
             confianza: Math.max(0, Math.min(1, Number(r.confianza) || 0)),
           }
         })
@@ -478,7 +492,7 @@ export function catalogImportRoutes(app: FastifyInstance) {
 
       const { products, supplies = [], units } = parsed.data
       const supplyBlock = supplies.length
-        ? supplies.map((s) => `k=${s.k} · ${s.name}${s.unit ? ` (${s.unit})` : ''}${s.origin === 'csv' ? ' [nuevo en este archivo]' : ''}`).join('\n')
+        ? supplies.map((s) => `k=${s.k} · ${s.name}${s.unit ? ` (${s.unit}${s.content && s.content > 1 ? ` de ${s.content} unidades sueltas` : ''})` : ''}${s.origin === 'csv' ? ' [nuevo en este archivo]' : ''}`).join('\n')
         : '(no hay insumos disponibles — devuelve k=null con nombres genéricos)'
       const prodBlock = products.map((p) => {
         const bits = [`i=${p.i}`, p.name]
