@@ -322,16 +322,20 @@ Para CADA fila decides:
 3) categoria_padre / categoria: jerarquía de máximo 2 niveles, en MAYÚSCULAS. Reutiliza las categorías
    existentes que te doy cuando encajen (mismo nombre exacto); si no, propone nombres cortos de negocio.
    Los INSUMOS van bajo categorías de insumo (ej. "INSUMOS" > "LACTEOS", "EMPAQUES" > "DESECHABLES").
-4) centro: a qué CENTRO DE PRODUCCIÓN se manda la comanda, por id de la lista que te doy. Guíate por el
-   nombre del centro y por lo que es el producto:
-   · BAR / BARRA / CAFETERÍA → cerveza, ron, tragos, cócteles, jugos y batidas naturales, café, refrescos
-     servidos en vaso, cualquier bebida preparada.
-   · COCINA / COCINA CALIENTE / PARRILLA / FREIDORA → platos cocinados, guisos, frituras, parrilla, sopas.
-   · COCINA FRÍA / PANTRY / ENSALADAS → ensaladas, sándwiches fríos, ceviches, postres fríos.
-   · PIZZERÍA / HORNO / REPOSTERÍA → pizzas, pan, bizcochos, postres horneados.
-   Si el producto se entrega tal como se compra y NO pasa por preparación (una botella de agua, un
-   refresco embotellado que se saca de la nevera, un repuesto), o es INSUMO o SERVICIO → null.
-   Si la lista solo tiene UN centro, úsalo para todo lo preparable.
+4) centro: a qué CENTRO DE PRODUCCIÓN se manda la comanda, por id de la lista que te doy.
+   **Lo primero es el NOMBRE del centro**: los centros los bautizó el cliente y su nombre dice qué
+   despachan. Si hay un centro llamado "ARROZ", los arroces y locrios van ahí; si hay "REFRESCOS" o
+   "NEVERA", las bebidas embotelladas van ahí; si hay "PIZZERÍA", las pizzas; "PARRILLA", lo asado;
+   "FREIDORA", las frituras; "POSTRES" o "REPOSTERÍA", los dulces; "CAFÉ", el café. Empareja el
+   producto con el centro cuyo nombre lo describa mejor ANTES de caer en los genéricos.
+   Genéricos, cuando ningún nombre encaja mejor:
+   · BAR / BARRA → cerveza, ron, tragos, cócteles, jugos y batidas, café, y también las bebidas
+     EMBOTELLADAS o en lata: en un restaurante las despacha el bar y necesitan su comanda.
+   · COCINA / COCINA CALIENTE → platos cocinados, guisos, frituras, parrilla, sopas.
+   · COCINA FRÍA / PANTRY → ensaladas, sándwiches fríos, ceviches, postres fríos.
+   Deja null SOLO si: es INSUMO o SERVICIO, o no hay ningún centro al que ese producto pudiera ir
+   (por ejemplo un repuesto o un artículo de ferretería). Si la lista tiene UN solo centro, úsalo
+   para todo lo que se venda.
 5) contable: la categoría CONTABLE del artículo, elegida por id de la lista que te doy (así el gasto y
    el costo de venta caen en la cuenta correcta). Si no hay lista, null.
 6) perecedero: si necesita control de vencimiento/lote.
