@@ -358,6 +358,9 @@ const RecipesBulkBody = z.object({
     // trae content=50 y el costeo divide el costo entre 50 → la cantidad de la
     // receta se expresa en unidades del CONTENIDO, no en empaques.
     content: z.coerce.number().positive().optional(),
+    // Costo del insumo POR SU UNIDAD BASE. Sin esto el modelo no puede saber que
+    // "1 PAQUETE de servilletas" son RD$85 en un plato que se vende a RD$190.
+    cost: z.coerce.number().nonnegative().optional(),
     origin: z.enum(['csv', 'catalogo']).optional(),
   })).max(400).optional(),
   units: z.array(z.string().min(1).max(60)).min(1).max(120),
@@ -408,8 +411,16 @@ Reglas:
   (para "PIZZA PEPPERONI" usa la masa/queso/pepperoni de la lista, no "ingredientes varios").
 · Cantidades realistas de food-cost en la unidad BASE del insumo elegido (si el insumo está en LIBRA,
   da la cantidad en libras: 0.25, no 113 gramos). Nunca "al gusto", nunca 0.
-· Si el insumo dice "de N unidades sueltas" (viene por empaque), la cantidad va en UNIDADES SUELTAS:
-  un vaso de un PAQUETE de 50 vasos es 1, NO 0.02. Nunca dividas por el contenido del empaque.
+· ESCALA — lo más importante: la cantidad se MULTIPLICA por el costo que te doy. Si pones
+  "1 PAQUETE" de servilletas de RD$85, le cargas 85 pesos a un solo plato. Una porción usa una
+  FRACCIÓN del empaque: de un PAQUETE de vasos o servilletas se usa 0.01–0.05; de un SACO de
+  harina o azúcar, 0.002–0.01; de un GALÓN de aceite o leche, 0.01–0.05.
+· Solo cuando el insumo dice "de N unidades sueltas" la cantidad va en unidades sueltas
+  (1 vaso de un paquete de 50 es 1). Si NO lo dice, "1" significa el EMPAQUE COMPLETO — casi
+  nunca es lo correcto para una porción.
+· CUADRA EL TOTAL: el costo de la receta debe quedar típicamente entre 20% y 40% del precio de
+  venta, y nunca por encima del 60%. Si una sola línea se come más del 15% del precio, estás
+  usando el empaque entero en vez de una porción: corrígela antes de responder.
 · Incluye desechables (envase, vaso, servilleta) solo si el producto claramente los usa y están en la lista.
 · Si el producto NO es preparable (un refresco embotellado, un repuesto), devuelve ingredients=[] y dilo en notes.
 · preparacion: pasos numerados y cortos ("1. Majar el plátano con ajo... 2. ..."), lo que cocina necesita
@@ -558,7 +569,7 @@ export function catalogImportRoutes(app: FastifyInstance) {
 
       const { products, supplies = [], units } = parsed.data
       const supplyBlock = supplies.length
-        ? supplies.map((s) => `k=${s.k} · ${s.name}${s.unit ? ` (${s.unit}${s.content && s.content > 1 ? ` de ${s.content} unidades sueltas` : ''})` : ''}${s.origin === 'csv' ? ' [nuevo en este archivo]' : ''}`).join('\n')
+        ? supplies.map((s) => `k=${s.k} · ${s.name}${s.unit ? ` (${s.unit}${s.content && s.content > 1 ? ` de ${s.content} unidades sueltas` : ''})` : ''}${s.cost ? ` — costo RD$${s.cost} por ${s.unit || 'unidad'}` : ''}${s.origin === 'csv' ? ' [nuevo en este archivo]' : ''}`).join('\n')
         : '(no hay insumos disponibles — devuelve k=null con nombres genéricos)'
       const prodBlock = products.map((p) => {
         const bits = [`i=${p.i}`, p.name]
