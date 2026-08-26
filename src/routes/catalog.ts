@@ -161,7 +161,7 @@ const CANON_FIELDS = [
   'nombre', 'descripcion', 'tipo', 'categoria_padre', 'categoria',
   'precio', 'precio2', 'precio3', 'costo', 'itbis', 'unidad', 'peso',
   'plu', 'barcode', 'barcode2', 'oem', 'aftermarket', 'interno', 'marca',
-  'min', 'max', 'stock',
+  'min', 'max', 'stock', 'proveedor',
 ] as const
 
 const MapColumnsBody = z.object({
@@ -225,6 +225,7 @@ cada columna. Reglas:
 · "um", "u/m", "unidad", "medida", "presentación" → unidad. "existencia", "cant", "stock" → stock.
 · "familia", "grupo", "depto", "línea" → categoria_padre; "subcategoría", "sub" → categoria.
 · "ean", "upc", "cod. barra" → barcode; "plu", "balanza" → plu; "ref", "sku", "código interno" → interno.
+· "proveedor", "suplidor", "suministrador", "vendor" → proveedor (el core lo cruza con sus proveedores).
 · Cualquier columna que no sirva para el catálogo → field=null. Nunca inventes un campo que no esté en la lista.
 Devuelve TODAS las columnas que te di, en el mismo orden, usando el encabezado EXACTO en source.`
 
@@ -233,6 +234,8 @@ const ClassifyBulkBody = z.object({
   business_type: z.coerce.number().int().min(1).max(9).nullable().optional(),
   units: z.array(z.string().min(1).max(60)).min(1).max(120),
   categories: z.array(z.object({ name: z.string().min(1).max(120), is_supply: z.boolean().optional() })).max(300).optional(),
+  // Categorías CONTABLES reales de la empresa (finances.account_categories).
+  account_categories: z.array(z.object({ id: z.coerce.number().int(), name: z.string().min(1).max(120) })).max(60).optional(),
   rows: z.array(z.object({
     i: z.coerce.number().int().min(0),
     name: z.string().min(1).max(300),
@@ -262,11 +265,13 @@ const CLASSIFY_BULK_SCHEMA = {
           categoria: { type: 'string', description: 'Subcategoría en MAYÚSCULAS (o GENERAL si no hay una clara).' },
           pesable: { type: 'boolean', description: 'true si se vende por peso en balanza (queso, carne a granel).' },
           desechable: { type: 'boolean', description: 'true si es empaque/desechable (vaso, servilleta, funda).' },
+          contable: { type: ['integer', 'null'], description: 'id EXACTO de la categoría contable de la lista que te di (la que corresponde a este artículo). null si no te dieron lista o ninguna aplica. Nunca inventes ids.' },
+          perecedero: { type: 'boolean', description: 'true si se daña con el tiempo y necesita control de vencimiento/lote (carnes, lácteos, vegetales, frutas, panadería, embutidos). false para secos, empaques, bebidas embotelladas, repuestos.' },
           contenido: { type: ['number', 'null'], description: 'Contenido de la presentación EXPRESADO EN LA UNIDAD QUE ELEGISTE, solo si el texto lo dice explícito: "VASO FOAM PQT 50" con unidad PAQUETE → 50; "CERVEZA CAJA 24" con unidad CAJA/CAJON → 24. Si la unidad ya es la de venta suelta (UNIDAD, LIBRA) o el contenido no está en el texto → null. NUNCA lo inventes.' },
           merma: { type: ['number', 'null'], description: 'Solo para INSUMO que pierde peso al limpiarse/pelarse: % de merma estándar (plátano ~30, yuca ~25, pechuga ~5). Si no aplica o no estás seguro → null.' },
           confianza: { type: 'number', description: 'Confianza 0 a 1.' },
         },
-        required: ['i', 'tipo', 'unidad', 'categoria_padre', 'categoria', 'pesable', 'desechable', 'contenido', 'merma', 'confianza'],
+        required: ['i', 'tipo', 'unidad', 'categoria_padre', 'categoria', 'contable', 'perecedero', 'pesable', 'desechable', 'contenido', 'merma', 'confianza'],
       },
     },
   },
@@ -291,9 +296,12 @@ Para CADA fila decides:
 3) categoria_padre / categoria: jerarquía de máximo 2 niveles, en MAYÚSCULAS. Reutiliza las categorías
    existentes que te doy cuando encajen (mismo nombre exacto); si no, propone nombres cortos de negocio.
    Los INSUMOS van bajo categorías de insumo (ej. "INSUMOS" > "LACTEOS", "EMPAQUES" > "DESECHABLES").
-4) contenido: SOLO si el nombre o la columna de presentación dice cuánto trae el empaque y la unidad
+4) contable: la categoría CONTABLE del artículo, elegida por id de la lista que te doy (así el gasto y
+   el costo de venta caen en la cuenta correcta). Si no hay lista, null.
+5) perecedero: si necesita control de vencimiento/lote.
+6) contenido: SOLO si el nombre o la columna de presentación dice cuánto trae el empaque y la unidad
    elegida es de empaque (PAQUETE, CAJA/CAJON, SACO, FARDO, DOCENA, BULTOS). Si no, null.
-5) merma: solo insumos que se pelan o limpian; si dudas, null.
+7) merma: solo insumos que se pelan o limpian; si dudas, null.
 No inventes filas ni cambies el índice i. Responde una entrada por cada fila recibida.`
 
 const RecipesBulkBody = z.object({
@@ -347,9 +355,10 @@ const RECIPES_BULK_SCHEMA = {
               required: ['k', 'name', 'quantity', 'unit', 'is_disposable'],
             },
           },
+          preparacion: { type: ['string', 'null'], description: 'Pasos de preparación numerados y cortos (máx 5 pasos, ~400 caracteres) para que cocina replique el plato igual siempre. null si el producto no se prepara.' },
           notes: { type: ['string', 'null'], description: 'Supuestos en una frase (porción asumida) o null.' },
         },
-        required: ['i', 'ingredients', 'notes'],
+        required: ['i', 'ingredients', 'preparacion', 'notes'],
       },
     },
   },
@@ -367,6 +376,8 @@ Reglas:
   un vaso de un PAQUETE de 50 vasos es 1, NO 0.02. Nunca dividas por el contenido del empaque.
 · Incluye desechables (envase, vaso, servilleta) solo si el producto claramente los usa y están en la lista.
 · Si el producto NO es preparable (un refresco embotellado, un repuesto), devuelve ingredients=[] y dilo en notes.
+· preparacion: pasos numerados y cortos ("1. Majar el plátano con ajo... 2. ..."), lo que cocina necesita
+  para que salga igual siempre. Sin florituras. null si no se prepara.
 · No repitas el mismo insumo dos veces en la misma receta. Máximo 12 líneas por receta.`
 
 /** Rutas del importador inteligente (se registran junto a las de catálogo). */
@@ -429,6 +440,9 @@ export function catalogImportRoutes(app: FastifyInstance) {
       const catBlock = categories.length
         ? `\n\nCategorías que YA existen (reutilízalas si encajan; las marcadas [insumo] son de insumos):\n${categories.map((c) => `· ${c.name}${c.is_supply ? ' [insumo]' : ''}`).join('\n')}`
         : ''
+      const accBlock = (parsed.data.account_categories || []).length
+        ? `\n\nCategorías CONTABLES (elige el id exacto para el campo contable):\n${parsed.data.account_categories!.map((a) => `${a.id}: ${a.name}`).join('\n')}`
+        : ''
       const rowBlock = rows.map((r) => {
         const bits = [`i=${r.i}`, r.name]
         if (r.category) bits.push(`cat="${r.category}"`)
@@ -443,16 +457,19 @@ export function catalogImportRoutes(app: FastifyInstance) {
       const result = await generateJSON<{ rows: Array<any> }>({
         config,
         system: `${CLASSIFY_BULK_SYSTEM}\n${bizLine(parsed.data.business_type)}`,
-        user: `Unidades del sistema (usa una EXACTA):\n${units.join(', ')}${catBlock}\n\nFilas a clasificar (${rows.length}):\n${rowBlock}`,
+        user: `Unidades del sistema (usa una EXACTA):\n${units.join(', ')}${catBlock}${accBlock}\n\nFilas a clasificar (${rows.length}):\n${rowBlock}`,
         schema: CLASSIFY_BULK_SCHEMA,
         schemaName: 'catalog_row_classification',
-        maxTokens: 4000,
+        // 11 campos por fila: con lotes de 30 filas hace falta holgura o el JSON
+        // se corta a medio camino y el lote entero se pierde.
+        maxTokens: 9000,
         usageMeta: { businessUnitId, userId, endpoint: 'catalog-import-classify' },
       })
 
       // Blindaje: índice recibido, unidad de la lista real, tipo válido.
       const wanted = new Map(rows.map((r) => [r.i, r]))
       const unitSet = new Map(units.map((u) => [u.toUpperCase().replace(/[^A-Z0-9]/g, ''), u]))
+      const accIds = new Set((parsed.data.account_categories || []).map((a) => a.id))
       const out = (result.rows || [])
         .filter((r: any) => wanted.has(Number(r?.i)))
         .map((r: any) => {
@@ -463,6 +480,9 @@ export function catalogImportRoutes(app: FastifyInstance) {
             unidad: unitSet.get(uKey) || null, // null = el core decide (respeta el CSV o UNIDAD)
             categoria_padre: String(r.categoria_padre ?? '').trim().toUpperCase() || null,
             categoria: String(r.categoria ?? '').trim().toUpperCase() || null,
+            // El id contable debe existir en la lista enviada (nunca uno inventado).
+            contable: accIds.has(Number(r.contable)) ? Number(r.contable) : null,
+            perecedero: !!r.perecedero,
             pesable: !!r.pesable,
             desechable: !!r.desechable,
             // contenido/merma: rangos sanos o null (el core no debe recibir basura).
@@ -541,7 +561,8 @@ export function catalogImportRoutes(app: FastifyInstance) {
             })
             .filter(Boolean)
             .slice(0, 12)
-          return { i: Number(r.i), ingredients, notes: r.notes || null }
+          const prep = typeof r.preparacion === 'string' ? r.preparacion.trim().slice(0, 1500) : ''
+          return { i: Number(r.i), ingredients, preparacion: prep || null, notes: r.notes || null }
         })
 
       return { success: true, enabled: true, provider: config.provider, model: config.model, recipes }
