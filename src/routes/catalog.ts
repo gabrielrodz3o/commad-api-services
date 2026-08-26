@@ -193,9 +193,14 @@ const MAP_SCHEMA = {
         required: ['source', 'field', 'confidence'],
       },
     },
+    price_includes_tax: {
+      type: ['boolean', 'null'],
+      description: 'La columna que mapeaste a `precio` ¿ya incluye el ITBIS (precio al público)? true = incluye, false = es base imponible / sin impuesto, null = no hay pistas suficientes.',
+    },
+    price_tax_reason: { type: ['string', 'null'], description: 'En qué te basaste (encabezado, otra columna, o si fue el supuesto por defecto). Una frase.' },
     notes: { type: ['string', 'null'], description: 'Aviso corto para el usuario (columna dudosa, precio que parece costo, etc.) o null.' },
   },
-  required: ['columns', 'notes'],
+  required: ['columns', 'price_includes_tax', 'price_tax_reason', 'notes'],
 } as const
 
 const BUSINESS_HINT: Record<number, string> = {
@@ -222,12 +227,27 @@ cada columna. Reglas:
 · "costo", "compra", "cost", "ult. costo" → costo. Si solo hay UNA columna de dinero y las muestras
   parecen costos de proveedor, mapéala a costo y avísalo en notes.
 · "mayorista"/"precio 2" → precio2; "vip"/"precio 3" → precio3.
+· Si hay DOS columnas del MISMO precio de venta (una con impuesto y otra sin), mapea a precio la que
+  YA INCLUYE el impuesto ("PRECIO CON ITBIS", "TOTAL", "P. FINAL") y deja la otra en null; en ese caso
+  price_includes_tax = true. El sistema guarda el precio al público.
 · "um", "u/m", "unidad", "medida", "presentación" → unidad. "existencia", "cant", "stock" → stock.
 · "familia", "grupo", "depto", "línea" → categoria_padre; "subcategoría", "sub" → categoria.
 · "ean", "upc", "cod. barra" → barcode; "plu", "balanza" → plu; "ref", "sku", "código interno" → interno.
+· Columna de IMPUESTO → itbis: "itbis", "impuesto", "imp", "tax", "iva", "tasa", "% imp", "gravado",
+  "exento", "e/g". No la confundas con el precio.
 · "proveedor", "suplidor", "suministrador", "vendor" → proveedor (el core lo cruza con sus proveedores).
 · Cualquier columna que no sirva para el catálogo → field=null. Nunca inventes un campo que no esté en la lista.
-Devuelve TODAS las columnas que te di, en el mismo orden, usando el encabezado EXACTO en source.`
+Devuelve TODAS las columnas que te di, en el mismo orden, usando el encabezado EXACTO en source.
+
+ADEMÁS decides price_includes_tax — si el precio de venta que mapeaste YA trae el ITBIS:
+· Encabezados como "PVP", "PRECIO PÚBLICO", "PRECIO VENTA", "PRECIO CON ITBIS", "P. FINAL",
+  "PRECIO TIENDA" → true (en República Dominicana el precio de mostrador se exhibe con impuesto).
+· "PRECIO SIN ITBIS", "BASE", "BASE IMPONIBLE", "PRECIO NETO", "SUBTOTAL", "PRECIO ANTES DE IMPUESTO",
+  o si hay DOS columnas de precio y una es visiblemente la otra + 18% (la menor es la base) → false.
+· Si el archivo trae una columna de impuesto MONTO (no tasa) aparte del precio, casi siempre el precio
+  es la base → false.
+· Sin pistas → null (el sistema asume que incluye ITBIS y se lo avisa al usuario).
+Explica tu razón en price_tax_reason.`
 
 const ClassifyBulkBody = z.object({
   ...locationFields,
@@ -397,7 +417,7 @@ export function catalogImportRoutes(app: FastifyInstance) {
         : ''
       const userId = req.actor?.type === 'user' ? req.actor.userId : null
 
-      const result = await generateJSON<{ columns: Array<{ source: string; field: string | null; confidence: number }>; notes: string | null }>({
+      const result = await generateJSON<{ columns: Array<{ source: string; field: string | null; confidence: number }>; price_includes_tax: boolean | null; price_tax_reason: string | null; notes: string | null }>({
         config,
         system: `${MAP_SYSTEM}\n${bizLine(parsed.data.business_type)}`,
         user: `Encabezados del archivo (${headers.length}):\n${headers.map((h, i) => `${i}: ${h}`).join('\n')}${sampleBlock}`,
@@ -418,7 +438,12 @@ export function catalogImportRoutes(app: FastifyInstance) {
           return { source: c.source, field, confidence: Math.max(0, Math.min(1, Number(c.confidence) || 0)) }
         })
 
-      return { success: true, enabled: true, provider: config.provider, model: config.model, columns, notes: result.notes || null }
+      return {
+        success: true, enabled: true, provider: config.provider, model: config.model, columns,
+        price_includes_tax: typeof result.price_includes_tax === 'boolean' ? result.price_includes_tax : null,
+        price_tax_reason: result.price_tax_reason || null,
+        notes: result.notes || null,
+      }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
       if (e instanceof LLMError) return reply.code(502).send({ success: false, message: e.message })
