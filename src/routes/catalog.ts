@@ -161,7 +161,7 @@ const CANON_FIELDS = [
   'nombre', 'descripcion', 'tipo', 'categoria_padre', 'categoria',
   'precio', 'precio2', 'precio3', 'costo', 'itbis', 'unidad', 'peso',
   'plu', 'barcode', 'barcode2', 'oem', 'aftermarket', 'interno', 'marca',
-  'min', 'max', 'stock', 'proveedor',
+  'min', 'max', 'stock', 'proveedor', 'imagen',
 ] as const
 
 const MapColumnsBody = z.object({
@@ -193,6 +193,10 @@ const MAP_SCHEMA = {
         required: ['source', 'field', 'confidence'],
       },
     },
+    looks_like_bom: {
+      type: 'boolean',
+      description: 'true si el archivo NO es un catálogo plano sino un export de LISTA DE MATERIALES: además del producto trae columnas de ingrediente (insumo/componente + su cantidad y unidad), de modo que el producto se repite en varias filas.',
+    },
     price_includes_tax: {
       type: ['boolean', 'null'],
       description: 'La columna que mapeaste a `precio` ¿ya incluye el ITBIS (precio al público)? true = incluye, false = es base imponible / sin impuesto, null = no hay pistas suficientes.',
@@ -200,7 +204,7 @@ const MAP_SCHEMA = {
     price_tax_reason: { type: ['string', 'null'], description: 'En qué te basaste (encabezado, otra columna, o si fue el supuesto por defecto). Una frase.' },
     notes: { type: ['string', 'null'], description: 'Aviso corto para el usuario (columna dudosa, precio que parece costo, etc.) o null.' },
   },
-  required: ['columns', 'price_includes_tax', 'price_tax_reason', 'notes'],
+  required: ['columns', 'looks_like_bom', 'price_includes_tax', 'price_tax_reason', 'notes'],
 } as const
 
 const BUSINESS_HINT: Record<number, string> = {
@@ -238,6 +242,7 @@ cada columna. Reglas:
   déjala en null y usa eso como señal de que el precio es la base (price_includes_tax=false).
   No confundas ninguna de las dos con el precio.
 · "proveedor", "suplidor", "suministrador", "vendor" → proveedor (el core lo cruza con sus proveedores).
+· "imagen", "imagen_url", "foto", "image_url", "picture" → imagen (el core la descarga y la guarda).
 · Cualquier columna que no sirva para el catálogo → field=null. Nunca inventes un campo que no esté en la lista.
 Devuelve TODAS las columnas que te di, en el mismo orden, usando el encabezado EXACTO en source.
 
@@ -448,7 +453,7 @@ export function catalogImportRoutes(app: FastifyInstance) {
         : ''
       const userId = req.actor?.type === 'user' ? req.actor.userId : null
 
-      const result = await generateJSON<{ columns: Array<{ source: string; field: string | null; confidence: number }>; price_includes_tax: boolean | null; price_tax_reason: string | null; notes: string | null }>({
+      const result = await generateJSON<{ columns: Array<{ source: string; field: string | null; confidence: number }>; looks_like_bom: boolean; price_includes_tax: boolean | null; price_tax_reason: string | null; notes: string | null }>({
         config,
         system: `${MAP_SYSTEM}\n${bizLine(parsed.data.business_type)}`,
         user: `Encabezados del archivo (${headers.length}):\n${headers.map((h, i) => `${i}: ${h}`).join('\n')}${sampleBlock}`,
@@ -471,6 +476,7 @@ export function catalogImportRoutes(app: FastifyInstance) {
 
       return {
         success: true, enabled: true, provider: config.provider, model: config.model, columns,
+        looks_like_bom: !!result.looks_like_bom,
         price_includes_tax: typeof result.price_includes_tax === 'boolean' ? result.price_includes_tax : null,
         price_tax_reason: result.price_tax_reason || null,
         notes: result.notes || null,
