@@ -13,6 +13,7 @@ import type { Tool } from './agent.js'
 import { listActions } from '../actions/registry.js'
 import { proposeAction } from '../db/action-log.js'
 import type { ActionContext } from '../actions/context.js'
+import { fetchFromCore } from '../core/client.js'
 
 // Acción propuesta por el agente (pendiente de confirmación del usuario).
 export interface ProposedAction {
@@ -52,7 +53,7 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
   const tools: Tool[] = [
     {
       name: 'get_report',
-      description: 'Obtiene un reporte ya calculado del negocio. Para "¿cuánto vendí/gané/utilidad/ingresos?" usa SIEMPRE domain="profit_loss". food cost → cost_analysis; caja → cash_flow. Para CONTABILIDAD FORMAL (estado de resultados/balance general/utilidad contable/cuánto gasté en una cuenta como alquiler o sueldos/gastos por cuenta/margen/food cost contable) usa domain="accounting" (cifras del mayor, nivel empresa). Pasa date_from/date_to según el período. Para el alcance de SUCURSALES usa location_ids: si el usuario no especifica, NO lo pongas (se usa la sucursal activa); si dice "todas/consolidado" pon todas; si nombra una, pon su id. Puedes llamarlo varias veces y combinar.',
+      description: 'Obtiene un reporte ya calculado del negocio. Para "¿cuánto vendí/gané/utilidad/ingresos?" usa SIEMPRE domain="profit_loss". food cost → cost_analysis; caja → cash_flow. Para CONTABILIDAD FORMAL, auditoría del mayor, cierre, asientos, documentos sin contabilizar, NCF/DGII, partidas abiertas, conciliación bancaria o liquidaciones Uber/PedidosYa usa domain="accounting". Ese contexto es por empresa/RNC, incluye moneda funcional, centavos, controles, evidencia reciente y rutas en sources/url: cita esas rutas cuando recomiendes revisar algo. Pasa date_from/date_to según el período. Para reportes operativos por SUCURSAL usa location_ids: si el usuario no especifica, NO lo pongas; si dice "todas/consolidado" pon todas; si nombra una, pon su id. Puedes llamarlo varias veces y combinar.',
       input_schema: {
         type: 'object',
         additionalProperties: false,
@@ -75,6 +76,28 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
         const usedNames = locationIds.map((id) => ctx.branches.find((b) => b.id === id)?.name || `Sucursal ${id}`)
         return { _sucursales_usadas: usedNames, ...compactReport(report, 12) }
       },
+    },
+    {
+      name: 'get_accounting_evidence',
+      description: 'Obtiene evidencia contable DETALLADA y de solo lectura para explicar un asiento, una cuenta o un documento concreto. Úsala después de get_report cuando el usuario indique un ID de asiento/documento o un código exacto de cuenta, o cuando necesites comprobar líneas, débitos, créditos, moneda, NCF y enlace fuente. No inventes identificadores ni la uses como consulta libre. kind="journal" exige ID de asiento; kind="document" exige ID de documento; kind="account" exige código exacto o ID de cuenta y admite período. Cita siempre data.source o los url devueltos.',
+      input_schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['kind', 'identifier'],
+        properties: {
+          kind: { type: 'string', enum: ['journal', 'account', 'document'], description: 'Tipo exacto de evidencia.' },
+          identifier: { type: 'string', description: 'ID numérico del asiento/documento o código/ID exacto de cuenta.' },
+          date_from: { type: 'string', description: 'YYYY-MM-DD, solo para cuenta.' },
+          date_to: { type: 'string', description: 'YYYY-MM-DD, solo para cuenta.' },
+        },
+      },
+      run: async (args: any) => fetchFromCore('/api/accounting/comandi-evidence', {
+        business_unit_id: ctx.businessUnitId,
+        kind: args.kind,
+        identifier: args.identifier,
+        date_from: args.date_from || ctx.defaultPeriod?.from,
+        date_to: args.date_to || ctx.defaultPeriod?.to,
+      }),
     },
     {
       name: 'get_procurement_context',

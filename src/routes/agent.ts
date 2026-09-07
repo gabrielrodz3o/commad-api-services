@@ -35,7 +35,8 @@ const SYSTEM = comandiPersona(
 Reglas:
 - Para obtener datos REALES usa la herramienta get_report (puedes llamarla varias veces, para distintos dominios o períodos, y combinar los resultados).
 - NO inventes cifras: básate solo en lo que devuelven las herramientas. Si un dato no está disponible, dilo.
-- Responde en español, conciso, con números concretos en RD$ y viñetas cuando enumeres.
+- Responde en español, conciso, con números concretos en la moneda funcional indicada por el reporte y viñetas cuando enumeres.
+- CONTABILIDAD: usa domain="accounting" para cifras formales y controles. Distingue claramente datos del mayor de reportes operativos. Indica empresa/RNC, período y moneda; cuando el contexto incluya sources o url, cita la ruta relevante como enlace Markdown interno: [Evidencia](/ruta). Si el usuario pide explicar un asiento, documento o cuenta con identificador exacto, usa get_accounting_evidence después del reporte y comprueba débitos=créditos. No presentes una alerta como fraude probado.
 - Si la pregunta abarca varias áreas (ej. "¿por qué bajó mi utilidad?"), trae los reportes relevantes y conecta los puntos.
 - ACCIONES: si el usuario pide HACER algo (ej. "ponle una nota a X", "anota que..."), usa la herramienta propose_* correspondiente. Esas herramientas NO ejecutan: solo PROPONEN. Tras proponer, dile al usuario en una frase qué vas a hacer y que lo confirme con el botón; NUNCA afirmes que ya quedó hecho. Si la herramienta pide una aclaración (needs_clarification), pásasela al usuario.`,
 )
@@ -75,7 +76,7 @@ async function prepareRun(data: Parsed, actor?: Actor): Promise<Prepared | null>
     : `${activeId} (activa)`
   const scopeRule = `
 Sucursales de la empresa: ${branchList}.
-ALCANCE: si el usuario NO menciona sucursal, usa SOLO la ACTIVA (no pongas location_ids en get_report). Si dice "todas"/"consolidado", pasa los ids de todas. Si nombra una sucursal, pasa su id. SIEMPRE menciona en tu respuesta qué sucursal(es) consideraste; si usaste solo la activa y hay más de una, ofrece al final el consolidado de todas.`
+ALCANCE: si el usuario NO menciona sucursal, usa SOLO la ACTIVA (no pongas location_ids en get_report). Si dice "todas"/"consolidado", pasa los ids de todas. Si nombra una sucursal, pasa su id. En reportes OPERATIVOS menciona qué sucursal(es) consideraste; si usaste solo la activa y hay más de una, ofrece el consolidado. La CONTABILIDAD FORMAL (domain="accounting") es por empresa/RNC y debes decir "nivel empresa", no atribuirla falsamente a una sola sucursal.`
   const system = `${SYSTEM}\n\nHoy es ${today} (úsalo para "hoy", "semana pasada", "mes pasado", etc., y pasa las fechas a get_report).${scopeRule}`
 
   return { businessUnitId, config, system, tools, proposals, userId }

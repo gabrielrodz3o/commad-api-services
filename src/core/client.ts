@@ -5,12 +5,17 @@
 // llamada interna (server/middleware/api-auth.ts) y la deja pasar.
 import { env } from '../config/env.js'
 
-export async function fetchFromCore<T = any>(path: string, body: Record<string, any>): Promise<T> {
+export async function fetchFromCore<T = any>(
+  path: string,
+  body: Record<string, any>,
+  options?: { actorUserId?: number | null },
+): Promise<T> {
   const res = await fetch(`${env.CORE_API_URL}${path}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-internal-secret': env.JWT_SECRET,
+      ...(options?.actorUserId ? { 'x-internal-user-id': String(options.actorUserId) } : {}),
     },
     body: JSON.stringify(body),
   })
