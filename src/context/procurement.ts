@@ -11,16 +11,16 @@ export async function buildProcurementContext(businessUnitId: number) {
   const bu = businessUnitId
   const [topSuppliers, byCategory, byPeriod, maverick, pendingPRs, discrepancies, contracts, budget] = await Promise.all([
     rows(`SELECT supplier_name, SUM(total_spend) AS spend, SUM(po_count) AS pos
-            FROM inventory.v_spend_cube WHERE business_unit_id = $1
+            FROM inventory.v_spend_cube WHERE business_unit_id = $1 AND source='INVOICE' AND is_intercompany=FALSE
             GROUP BY supplier_name ORDER BY spend DESC LIMIT 10`, [bu]),
     rows(`SELECT category_name, SUM(total_spend) AS spend
-            FROM inventory.v_spend_cube WHERE business_unit_id = $1 AND category_name IS NOT NULL
+            FROM inventory.v_spend_cube WHERE business_unit_id = $1 AND source='INVOICE' AND is_intercompany=FALSE AND category_name IS NOT NULL
             GROUP BY category_name ORDER BY spend DESC LIMIT 8`, [bu]),
     rows(`SELECT period, SUM(total_spend) AS spend
-            FROM inventory.v_spend_cube WHERE business_unit_id = $1 AND period IS NOT NULL
+            FROM inventory.v_spend_cube WHERE business_unit_id = $1 AND source='INVOICE' AND is_intercompany=FALSE AND period IS NOT NULL
             GROUP BY period ORDER BY period DESC LIMIT 6`, [bu]),
     rows(`SELECT supplier_name, total_spend, maverick_reason
-            FROM inventory.v_maverick_spend WHERE business_unit_id = $1
+            FROM inventory.v_maverick_spend WHERE business_unit_id = $1 AND is_intercompany=FALSE
             ORDER BY total_spend DESC LIMIT 10`, [bu]),
     rows(`SELECT code, priority, estimated_total
             FROM inventory.purchase_requisitions
@@ -34,9 +34,9 @@ export async function buildProcurementContext(businessUnitId: number) {
            WHERE o.business_unit_id = $1 AND tm.match_status NOT IN ('MATCHED','MANUAL_OVERRIDE')
            ORDER BY tm.created_at DESC LIMIT 10`, [bu]),
     rows(`SELECT contract_number, supplier_name, days_until_expiry, alert_level
-            FROM inventory.v_contracts_expiring
+            FROM inventory.v_contracts_expiring vc JOIN finances.entities e ON e.id=vc.supplier_id AND e.business_unit_id=$1
            WHERE alert_level IN ('DUE_SOON','EXPIRED','UPCOMING')
-           ORDER BY days_until_expiry ASC LIMIT 10`),
+           ORDER BY days_until_expiry ASC LIMIT 10`,[bu]),
     rows(`SELECT chart_of_account_id, SUM(total_committed) AS committed, SUM(available_to_consume) AS available
             FROM inventory.v_budget_availability WHERE business_unit_id = $1
             GROUP BY chart_of_account_id ORDER BY available DESC LIMIT 10`, [bu]),

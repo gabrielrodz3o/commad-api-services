@@ -84,7 +84,7 @@ async function handleCallback(cb: any): Promise<void> {
   if (!link) return void answerCallbackQuery(cb.id, 'No estás vinculado')
 
   if (kind === 'r') {
-    await rejectActionByToken(token)
+    await rejectActionByToken(token, link.user_id)
     await answerCallbackQuery(cb.id, 'Cancelado')
     return void editMessageText(chatId, cb.message.message_id, '✖️ Acción cancelada.')
   }

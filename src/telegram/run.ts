@@ -20,7 +20,7 @@ export interface UserAnswer { enabled: boolean; answer: string; pending: Propose
 
 export async function answerForUser(userId: number, question: string, endpoint = 'telegram'): Promise<UserAnswer> {
   const scope = await resolveUserScope(userId)
-  if (!scope) return { enabled: true, answer: 'No tienes sucursales asignadas en COMAND.', pending: null }
+  if (!scope) return { enabled: true, answer: 'Selecciona una empresa y sucursal en Comandi web. Este canal necesita un alcance único y no elige un RNC automáticamente.', pending: null }
 
   const config = await getAIConfig(scope.businessUnitId)
   if (!config) return { enabled: false, answer: 'La IA (Comandi) no está activada para tu empresa.', pending: null }

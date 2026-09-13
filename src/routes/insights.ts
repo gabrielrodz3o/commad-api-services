@@ -1,3 +1,4 @@
+import { assertBusinessAccess } from '../db/business-access.js'
 // POST /comandi/insights
 // Body: { location_id | location_ids, domain, report }
 // Análisis ejecutivo estructurado de un reporte ya calculado por el front.
@@ -27,6 +28,9 @@ export function insightsRoutes(app: FastifyInstance) {
       const locationIds = normalizeLocationIds(parsed.data)
       const { businessUnitId, config } = await resolveTenant(parsed.data, req.actor)
       if (!config) return { success: true, enabled: false, message: 'Comandi no está activado para esta empresa.' }
+
+      const actorId=req.actor?.type==='user'?req.actor.userId:null
+      await assertBusinessAccess(actorId,businessUnitId,locationIds,parsed.data.domain==='accounting'?'accounting_statements':'reports','read',parsed.data.domain==='accounting')
 
       // report: fast-path (lo pasó la página) o lo trae Comandi del core (autónomo).
       let report = parsed.data.report

@@ -14,6 +14,7 @@ import { listActions } from '../actions/registry.js'
 import { proposeAction } from '../db/action-log.js'
 import type { ActionContext } from '../actions/context.js'
 import { fetchFromCore } from '../core/client.js'
+import { assertBusinessAccess } from '../db/business-access.js'
 
 // Acción propuesta por el agente (pendiente de confirmación del usuario).
 export interface ProposedAction {
@@ -44,7 +45,8 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
 
   // Resuelve qué sucursales usar: las que pidió el LLM (validadas), o la activa por defecto.
   const resolveLocations = (requested?: number[]): number[] => {
-    const req = (requested || []).map(Number).filter((id) => allowed.has(id))
+    if (requested?.some(id => !allowed.has(Number(id)))) throw new Error('Sucursal fuera del alcance autorizado')
+    const req = (requested || []).map(Number)
     if (req.length) return req
     if (ctx.activeLocationId && allowed.has(ctx.activeLocationId)) return [ctx.activeLocationId]
     return ctx.allowedLocationIds.slice(0, 1)
@@ -202,5 +204,15 @@ export function buildBusinessTools(ctx: BusinessCtx): Tool[] {
       },
     })
   }
-  return tools
+  return tools.map(tool => {
+    const run = tool.run
+    return { ...tool, run: async (args: any) => {
+      const accounting = tool.name === 'get_accounting_evidence' || args?.domain === 'accounting' || tool.name === 'propose_create_accounting_journal_draft'
+      const note = tool.name === 'propose_add_client_note'
+      const companyWide = accounting || note || tool.name === 'get_procurement_context' || tool.name === 'get_knowledge'
+      const screen = accounting ? (tool.name.startsWith('propose_') ? 'accounting_journal' : tool.name==='get_accounting_evidence' ? 'accounting_ledger' : 'accounting_statements') : note ? 'clients' : tool.name==='get_procurement_context' ? 'analytics_compras' : 'reports'
+      await assertBusinessAccess(ctx.userId, ctx.businessUnitId, ctx.allowedLocationIds, screen, tool.name.startsWith('propose_') ? 'create' : 'read', companyWide)
+      return run(args)
+    }}
+  })
 }

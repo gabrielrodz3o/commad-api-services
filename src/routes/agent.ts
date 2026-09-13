@@ -13,12 +13,13 @@ import { runAgent, AgentError, type Tool } from '../llm/agent.js'
 import { runAgentStream } from '../llm/agent-stream.js'
 import { logUsage } from '../db/usage-log.js'
 import type { CompanyAIConfig } from '../db/tenant.js'
+import { query } from '../db/pool.js'
 import type { Actor } from '../plugins/auth.js'
 import '../actions/index.js' // registra las acciones de escritura disponibles
 
 const Body = z.object({
   ...locationFields,
-  question: z.string().min(1).max(2000),
+  question: z.string().min(1).max(30000),
   period: z.object({ from: z.string().optional(), to: z.string().optional() }).nullish(),
   // Sucursal activa (donde navega el usuario) + catálogo de sucursales (id+nombre).
   active_location_id: z.coerce.number().int().positive().optional(),
@@ -26,8 +27,8 @@ const Body = z.object({
   // Memoria conversacional: turnos previos (solo texto).
   history: z.array(z.object({
     role: z.enum(['user', 'assistant']),
-    content: z.string(),
-  })).optional(),
+    content: z.string().max(16000),
+  })).max(30).optional(),
 })
 
 const SYSTEM = comandiPersona(
@@ -58,7 +59,7 @@ async function prepareRun(data: Parsed, actor?: Actor): Promise<Prepared | null>
   const { businessUnitId, config } = await resolveTenant(data, actor)
   if (!config) return null
 
-  const branches = (data.branches || []).filter((b) => locationIds.includes(b.id))
+  const branches = await query<{id:number;name:string}>('SELECT id,description_long AS name FROM human_resource.locations WHERE business_unit_id=$1 AND id=ANY($2::int[])',[businessUnitId,locationIds])
   const activeId = data.active_location_id && locationIds.includes(data.active_location_id)
     ? data.active_location_id
     : locationIds[0]
@@ -70,7 +71,7 @@ async function prepareRun(data: Parsed, actor?: Actor): Promise<Prepared | null>
     branches, defaultPeriod: data.period, userId, proposals,
   })
 
-  const today = data.period?.to || new Date().toISOString().slice(0, 10)
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santo_Domingo' }).format(new Date())
   const branchList = branches.length
     ? branches.map((b) => `${b.id}: ${b.name}${b.id === activeId ? ' (ACTIVA)' : ''}`).join(' · ')
     : `${activeId} (activa)`
@@ -92,6 +93,7 @@ export interface AgentRunResult {
   answer?: string
   tools_used?: string[]
   pending_action?: ProposedAction | null
+  pending_actions?: ProposedAction[]
 }
 
 // Corre el agente para una petición ya validada. Reutilizado por /comandi/agent
@@ -105,7 +107,8 @@ export async function runBusinessAgent(data: AgentData, actor?: Actor): Promise<
     enabled: true, provider: p.config.provider, model: p.config.model,
     answer: result.answer,
     tools_used: result.steps.map((s) => s.tool),
-    pending_action: p.proposals.length ? p.proposals[p.proposals.length - 1] : null,
+    pending_action: p.proposals.length === 1 ? p.proposals[0] : null,
+    pending_actions: p.proposals,
   }
 }
 
@@ -163,7 +166,8 @@ export function agentRoutes(app: FastifyInstance) {
       send('done', {
         answer: result.answer,
         tools_used: result.steps.map((s) => s.tool),
-        pending_action: p.proposals.length ? p.proposals[p.proposals.length - 1] : null,
+        pending_action: p.proposals.length === 1 ? p.proposals[0] : null,
+    pending_actions: p.proposals,
       })
     } catch (e: any) {
       send('error', { message: e?.message || 'Error en el copiloto' })

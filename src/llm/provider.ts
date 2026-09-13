@@ -23,6 +23,7 @@ export interface TextOpts {
   maxTokens?: number
   // Imagen opcional (visión multimodal): base64 SIN prefijo data:.
   image?: { base64: string; mimeType: string }
+  document?: { base64: string; filename: string }
   // Si viene, se registra el consumo en comandi.usage_log (costo por empresa).
   usageMeta?: UsageMeta
 }
@@ -109,7 +110,9 @@ export async function generateJSON<T = any>(opts: JsonOpts): Promise<T> {
           { role: 'system', content: [{ type: 'input_text', text: system }] },
           {
             role: 'user',
-            content: opts.image
+            content: opts.document
+              ? [{ type: 'input_text', text: user }, { type: 'input_file', filename: opts.document.filename, file_data: `data:application/pdf;base64,${opts.document.base64}` }]
+              : opts.image
               ? [
                   { type: 'input_text', text: user },
                   { type: 'input_image' as const, image_url: `data:${opts.image.mimeType};base64,${opts.image.base64}`, detail: 'high' as const },
@@ -118,6 +121,7 @@ export async function generateJSON<T = any>(opts: JsonOpts): Promise<T> {
           },
         ],
       })
+      if (res.status !== 'completed') throw new Error('Respuesta incompleta; divide el documento o reduce la consulta')
       const raw = res.output_text
       if (!raw) throw new Error('Respuesta vacía (OpenAI)')
       record(opts, res.usage)
@@ -130,7 +134,9 @@ export async function generateJSON<T = any>(opts: JsonOpts): Promise<T> {
       system,
       messages: [{
         role: 'user',
-        content: opts.image
+        content: opts.document
+          ? [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: opts.document.base64 } }, { type: 'text', text: user }]
+          : opts.image
           ? [
               { type: 'image', source: { type: 'base64', media_type: opts.image.mimeType as any, data: opts.image.base64 } },
               { type: 'text', text: user },
@@ -140,6 +146,7 @@ export async function generateJSON<T = any>(opts: JsonOpts): Promise<T> {
       tools: [{ name: 'emit_result', description: 'Devuelve el resultado estructurado requerido.', input_schema: schema as any }],
       tool_choice: { type: 'tool', name: 'emit_result' },
     })
+    if (msg.stop_reason === 'max_tokens') throw new Error('Respuesta incompleta; divide el documento')
     const block = msg.content.find((b: any) => b.type === 'tool_use') as any
     if (!block) throw new Error('Sin tool_use (Claude)')
     record(opts, msg.usage)

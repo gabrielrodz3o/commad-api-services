@@ -41,14 +41,15 @@ export async function resolveBusinessUnit(locationIds: number[]): Promise<number
   if (!locationIds.length) throw new TenantError('Debes enviar al menos un location_id.')
 
   const rows = await query<{ business_unit_id: number }>(
-    `SELECT DISTINCT business_unit_id
+    `SELECT id, business_unit_id
        FROM human_resource.locations
       WHERE id = ANY($1::int[]) AND business_unit_id IS NOT NULL`,
     [locationIds],
   )
 
   if (rows.length === 0) throw new TenantError('No se encontró la unidad de negocio para esas sucursales.', 404)
-  if (rows.length > 1) {
+  if (rows.length !== new Set(locationIds).size) throw new TenantError('Una o más sucursales no existen.', 403)
+  if (new Set(rows.map(r => Number(r.business_unit_id))).size > 1) {
     throw new TenantError('Las sucursales (location_ids) pertenecen a empresas distintas. Envía solo sucursales de la misma empresa.', 422)
   }
   return rows[0].business_unit_id

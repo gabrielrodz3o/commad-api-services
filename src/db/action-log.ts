@@ -75,5 +75,11 @@ export async function markFailed(id: string, error: string): Promise<void> {
 }
 
 export async function markRejected(id: string): Promise<void> {
-  await pool.query(`UPDATE comandi.action_log SET status='rejected' WHERE id=$1`, [id])
+  await pool.query(`UPDATE comandi.action_log SET status='rejected' WHERE id=$1 AND status='proposed'`, [id])
+}
+
+export async function claimAction(id: string): Promise<boolean> {
+  const result = await pool.query(`UPDATE comandi.action_log SET status='confirmed'
+    WHERE id=$1 AND status='proposed' AND expires_at>now() RETURNING id`,[id])
+  return Boolean(result.rowCount)
 }

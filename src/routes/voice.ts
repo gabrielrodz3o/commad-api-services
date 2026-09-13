@@ -41,7 +41,7 @@ export function voiceRoutes(app: FastifyInstance) {
       const { config } = await resolveTenant(payload, req.actor)
       if (!config) return { success: true, enabled: false, message: 'Comandi no está activado para esta empresa.' }
 
-      const oaiKey = config.provider === 'openai' ? config.apiKey : (env.OPENAI_API_KEY || config.apiKey)
+      const oaiKey = config.provider === 'openai' ? config.apiKey : (env.OPENAI_API_KEY || '')
       if (!oaiKey) return reply.code(503).send({ success: false, message: 'Transcripción de voz no disponible (falta llave de OpenAI).' })
 
       const transcript = await transcribe(oaiKey, audioBuf, filename)

@@ -1,10 +1,11 @@
+import { assertBusinessAccess } from '../db/business-access.js'
 // Base de conocimiento del negocio (RAG).
 //   POST /comandi/knowledge        (JWT) { title?, content }  → ingesta (embed + guarda)
 //   POST /comandi/knowledge/list   (JWT)                       → lista documentos
 //   POST /comandi/knowledge/delete (JWT) { id }                → borra uno
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { locationFields, resolveTenant } from '../lib/resolve.js'
+import { locationFields, normalizeLocationIds, resolveTenant } from '../lib/resolve.js'
 import { TenantError } from '../db/tenant.js'
 import { embed } from '../context/embeddings.js'
 import { addKnowledge, listKnowledge, deleteKnowledge } from '../db/knowledge.js'
@@ -16,6 +17,7 @@ export function knowledgeRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ success: false, message: 'Falta el contenido' })
     try {
       const { businessUnitId } = await resolveTenant(parsed.data, req.actor)
+      await assertBusinessAccess(req.actor?.type==='user'?req.actor.userId:null,businessUnitId,normalizeLocationIds(parsed.data),'reports','read',true)
       const userId = req.actor?.type === 'user' ? req.actor.userId : null
       const vec = await embed(`${parsed.data.title || ''}\n${parsed.data.content}`, businessUnitId)
       const id = await addKnowledge(businessUnitId, parsed.data.title || null, parsed.data.content, vec, userId)
@@ -32,6 +34,7 @@ export function knowledgeRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ success: false, message: 'Body inválido' })
     try {
       const { businessUnitId } = await resolveTenant(parsed.data, req.actor)
+      await assertBusinessAccess(req.actor?.type==='user'?req.actor.userId:null,businessUnitId,normalizeLocationIds(parsed.data),'reports','read',true)
       return { success: true, items: await listKnowledge(businessUnitId) }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
@@ -44,6 +47,7 @@ export function knowledgeRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ success: false, message: 'Falta id' })
     try {
       const { businessUnitId } = await resolveTenant(parsed.data, req.actor)
+      await assertBusinessAccess(req.actor?.type==='user'?req.actor.userId:null,businessUnitId,normalizeLocationIds(parsed.data),'reports','read',true)
       await deleteKnowledge(businessUnitId, parsed.data.id)
       return { success: true }
     } catch (e: any) {

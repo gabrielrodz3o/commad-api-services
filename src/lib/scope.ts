@@ -17,10 +17,10 @@ export async function resolveUserScope(userId: number): Promise<UserScope | null
        FROM human_resource.locations l
       WHERE l.id = ANY($1) AND l.business_unit_id IS NOT NULL
       GROUP BY l.business_unit_id
-      ORDER BY count(*) DESC
-      LIMIT 1`,
+      ORDER BY l.business_unit_id`,
     [accessible],
   )
-  if (!rows.length) return null
+  // Without an explicit channel company, never guess a dominant RNC.
+  if (rows.length !== 1) return null
   return { businessUnitId: Number(rows[0].business_unit_id), locationIds: rows[0].ids.map(Number) }
 }

@@ -30,7 +30,7 @@ export function actionRoutes(app: FastifyInstance) {
   app.post('/comandi/action/reject', async (req, reply) => {
     const parsed = Body.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ success: false, message: 'Falta confirm_token' })
-    const ok = await rejectActionByToken(parsed.data.confirm_token)
+    const ok = await rejectActionByToken(parsed.data.confirm_token, req.actor?.type === 'user' ? req.actor.userId : null)
     if (!ok) return reply.code(404).send({ success: false, message: 'Acción no encontrada' })
     return { success: true, rejected: true }
   })

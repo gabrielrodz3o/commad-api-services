@@ -80,15 +80,11 @@ export const REPORT_INSIGHTS_SCHEMA = {
   },
 } as const
 
-export function compactReport(value: any, maxItems = 15, depth = 0): any {
-  if (depth > 6) return null
-  if (Array.isArray(value)) return value.slice(0, maxItems).map((v) => compactReport(v, maxItems, depth + 1))
-  if (value && typeof value === 'object') {
-    const out: Record<string, any> = {}
-    for (const k of Object.keys(value)) out[k] = compactReport(value[k], maxItems, depth + 1)
-    return out
-  }
-  if (typeof value === 'string' && value.length > 400) return value.slice(0, 400) + '…'
+export function compactReport(value: any, _maxItems = 2000, _depth = 0): any {
+  // Never silently truncate time series, accounting lines or sources.
+  // Large reports require a narrower query rather than a misleading sample.
+  const serialized = JSON.stringify(value)
+  if (serialized && serialized.length > 120000) throw new Error('Reporte demasiado amplio: reduce el período o las sucursales para obtener un análisis completo.')
   return value
 }
 

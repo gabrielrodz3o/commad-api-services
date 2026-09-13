@@ -38,7 +38,7 @@ export function notificationRoutes(app: FastifyInstance) {
   })
 
   app.post('/comandi/notifications/smtp-test', async (req, reply) => {
-    if (req.actor?.type !== 'service' && req.actor?.type !== 'user') {
+    if (req.actor?.type !== 'service') {
       return reply.code(401).send({ success: false, message: 'No autorizado' })
     }
     const parsed = SmtpTestBody.safeParse(req.body)

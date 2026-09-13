@@ -1,9 +1,10 @@
+import { assertBusinessAccess } from '../db/business-access.js'
 // POST /comandi/usage  { location_ids, date_from?, date_to? }
 // Consumo de IA de la empresa (BYO-key, control de gasto): agrega comandi.usage_log
 // por la BU del usuario (RBAC). Devuelve totales + desglose por día / endpoint / modelo.
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { locationFields, resolveTenant } from '../lib/resolve.js'
+import { locationFields, normalizeLocationIds, resolveTenant } from '../lib/resolve.js'
 import { TenantError } from '../db/tenant.js'
 import { query } from '../db/pool.js'
 
@@ -25,6 +26,7 @@ export function usageRoutes(app: FastifyInstance) {
 
     try {
       const { businessUnitId } = await resolveTenant(parsed.data, req.actor)
+      await assertBusinessAccess(req.actor?.type==='user'?req.actor.userId:null,businessUnitId,normalizeLocationIds(parsed.data),'reports','read',true)
       const from = parsed.data.date_from || firstOfMonth()
       const to = parsed.data.date_to || new Date().toISOString().slice(0, 10)
       const args = [businessUnitId, from, to]
