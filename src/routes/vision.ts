@@ -5,7 +5,7 @@
 // Ambos aceptan multipart (file 'image' + field 'payload' JSON) o solo payload
 // con image_url (producto existente cuya foto ya vive en Spaces/PocketBase).
 // La nota usa el motor BYO-key de la empresa (OpenAI o Claude). La MEJORA de
-// imagen es solo OpenAI (gpt-image-1): si la empresa usa Claude se cae a la
+// imagen es solo OpenAI: si la empresa usa Claude se cae a la
 // llave OpenAI global, igual que la transcripción de voz.
 import type { FastifyInstance } from 'fastify'
 import OpenAI, { toFile } from 'openai'
@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { locationFields, resolveTenant } from '../lib/resolve.js'
 import { TenantError } from '../db/tenant.js'
 import { env } from '../config/env.js'
+import { IMAGE_MODEL, imageRequestOptions } from '../config/image-model.js'
 import { generateJSON, LLMError } from '../llm/provider.js'
 import { addUsage, type AIUsage } from '../llm/usage.js'
 import { logUsage } from '../db/usage-log.js'
@@ -218,34 +219,28 @@ export function visionRoutes(app: FastifyInstance) {
       const { businessUnitId, config } = await resolveTenant(parsed.data, req.actor)
       if (!config) return { success: true, enabled: false, message: 'Comandi no está activado para esta empresa.' }
 
-      // gpt-image-1 es exclusivo de OpenAI: llave de la empresa o la global.
+      // Imágenes de OpenAI: llave de la empresa o la global.
       const oaiKey = config.provider === 'openai' ? config.apiKey : (env.OPENAI_API_KEY || '')
       if (!oaiKey) return reply.code(503).send({ success: false, message: 'Mejora de imagen no disponible (falta llave de OpenAI).' })
 
       const image = await resolveImage(file, parsed.data.image_url)
       const client = new OpenAI({ apiKey: oaiKey })
       const res: any = await client.images.edit({
-        model: 'gpt-image-1',
+        ...imageRequestOptions,
         image: await toFile(image.buffer, image.filename, { type: image.mimeType }),
         prompt: ENHANCE_PROMPT,
-        size: '1024x1024',
-        quality: 'medium',
-        // Preserva logos, etiquetas y texto del producto original (sin esto
-        // gpt-image-1 "redibuja" las marcas y el texto pequeño sale ilegible).
-        input_fidelity: 'high',
-        n: 1,
       })
 
       const b64 = res?.data?.[0]?.b64_json
       if (!b64) return reply.code(502).send({ success: false, message: 'El modelo no devolvió la imagen mejorada.' })
 
-      // Consumo (best-effort): gpt-image-1 reporta tokens en usage.
+      // Consumo (best-effort): registrar el mismo modelo enviado a OpenAI.
       const userId = req.actor?.type === 'user' ? req.actor.userId : null
-      const usage: AIUsage = { provider: 'openai', model: 'gpt-image-1', tokensIn: 0, tokensOut: 0 }
+      const usage: AIUsage = { provider: 'openai', model: IMAGE_MODEL, tokensIn: 0, tokensOut: 0 }
       addUsage(usage, res?.usage)
       logUsage({ businessUnitId, userId, endpoint: 'vision-enhance' }, usage)
 
-      return { success: true, enabled: true, model: 'gpt-image-1', image_base64: b64, mime_type: 'image/png' }
+      return { success: true, enabled: true, model: IMAGE_MODEL, image_base64: b64, mime_type: 'image/png' }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
       req.log.error(e)
@@ -280,22 +275,19 @@ Sin texto superpuesto, sin marcas de agua, una sola unidad del producto.`
 
       const client = new OpenAI({ apiKey: oaiKey })
       const res: any = await client.images.generate({
-        model: 'gpt-image-1',
+        ...imageRequestOptions,
         prompt,
-        size: '1024x1024',
-        quality: 'medium',
-        n: 1,
       })
 
       const b64 = res?.data?.[0]?.b64_json
       if (!b64) return reply.code(502).send({ success: false, message: 'El modelo no devolvió la imagen.' })
 
       const userId = req.actor?.type === 'user' ? req.actor.userId : null
-      const usage: AIUsage = { provider: 'openai', model: 'gpt-image-1', tokensIn: 0, tokensOut: 0 }
+      const usage: AIUsage = { provider: 'openai', model: IMAGE_MODEL, tokensIn: 0, tokensOut: 0 }
       addUsage(usage, res?.usage)
       logUsage({ businessUnitId, userId, endpoint: 'vision-generate' }, usage)
 
-      return { success: true, enabled: true, model: 'gpt-image-1', image_base64: b64, mime_type: 'image/png' }
+      return { success: true, enabled: true, model: IMAGE_MODEL, image_base64: b64, mime_type: 'image/png' }
     } catch (e: any) {
       if (e instanceof TenantError) return reply.code(e.statusCode).send({ success: false, message: e.message })
       req.log.error(e)
