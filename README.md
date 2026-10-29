@@ -34,8 +34,9 @@ pnpm dev               # http://localhost:4080
 ```
 
 ## Auth
-Todo request (salvo `/health`) requiere `Authorization: Bearer <COMANDI_SERVICE_TOKEN>`.
-Pensado para que el **core (Nuxt) llame server-to-server**; el token nunca va al navegador.
+Las rutas protegidas aceptan la identidad configurada para cada operación: token de servicio
+para integraciones internas o JWT de usuario con sus permisos. El token de servicio nunca va al navegador.
+Las rutas de Workspace requieren JWT de usuario y rechazan la identidad de servicio.
 
 ## Endpoints
 | Método | Ruta | Body | Qué hace |
@@ -74,3 +75,24 @@ Cómo lo llama el **core (Nuxt)** — variable `COMANDI_URL`:
 - Solo lectura de datos de negocio; no escribe nada del negocio.
 - La config de IA se consulta por request (caché ~60s).
 - Cada empresa usa **su** llave; fallback global en `.env` si no tiene.
+
+## Contrato de Comandi Workspace
+
+`POST /comandi/workspace/reason` recibe del ERP el contexto, instrucciones, evidencia y esquema
+para `comandi_plan` o `comandi_analysis`. El ERP ejecuta las consultas parametrizadas y valida
+los resultados; este servicio invoca el modelo y registra el consumo. Esta ruta no ejecuta SQL
+generado ni movimientos de inventario.
+
+- Alcance obligatorio: `business_unit_id`, `active_location_id` y `location_ids` (1–100).
+- `permission_screens`: `reports`, `crm`, `inventories`, `requisiciones`, `movement`,
+  `adjustment`, `kardex`, `receipts`, `production`, `waste`, `requisitions`, `requisitions_received`.
+- Se comprueba `comandi/read` además de cada pantalla solicitada, antes y después del modelo.
+- Para transferencias, el ERP aporta el dominio `transfers`, el filtro `guide_number` y la
+  auditoría de los movimientos. Admitir `movement` en el servicio permite usar esa capacidad;
+  no concede acceso adicional al usuario.
+- Al publicar esta mejora, actualizar primero el servicio y después el ERP. El servicio anterior
+  rechaza los nuevos códigos de pantalla con HTTP 400.
+
+Validación: `pnpm check` con las variables de entorno de prueba descritas en CI.
+`test/workspace.test.ts` prueba el contrato HTTP, permisos denegados/revocados y fallos del motor
+con dependencias simuladas; no consume IA ni conecta con producción.
